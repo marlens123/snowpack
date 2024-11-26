@@ -224,4 +224,10 @@ If you want to contribute to this repository, the development dependencies will 
      dependencies, unless you are already familiar with dependency management. 
 5. Read and follow the [Contributing guidelines](CONTRIBUTING.md)
 
+## Settings
+
+For the experiments presented here, we use SAM as the backbone model. We also use data augmentation, which you can find in the pipeline at `snowpack/augmentations.py`. To see a sample, you can run `tests/augmentation_test.py`. The result of such a test is given on a sample data seen in the figure below:
+
+![Augmentation Test Results](assets/train_test_transforms_results.png)
+
 
