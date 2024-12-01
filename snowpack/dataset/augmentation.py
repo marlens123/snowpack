@@ -21,11 +21,11 @@ def get_transformation(mean, std):
             v2.ToDtype(torch.float32, scale=True),
             v2.Grayscale(3),  # Convert to 3-channel grayscale image
             # Crop a random portion of image and resize it to a given size.
-            v2.RandomResizedCrop(size=1024, scale=(0.08, 1.0), ratio=(0.75, 1.33)),
+            v2.RandomResizedCrop(size=1024, scale=(0.08, 1.0), ratio=(0.75, 1.33), interpolation=v2.InterpolationMode.NEAREST),
             v2.RandomHorizontalFlip(p=0.5),
             v2.RandomVerticalFlip(p=0.5),
             v2.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1),
-            v2.RandomRotation(degrees=15),  # type: ignore
+            v2.RandomRotation(degrees=15, interpolation=v2.InterpolationMode.NEAREST),  # type: ignore
             v2.Normalize(mean=mean, std=std),
         ]
     )
@@ -44,7 +44,7 @@ def get_transformation(mean, std):
     return train_transform, test_transform
 
 
-def normalize_image(image: np.ndarray) -> np.ndarray:
+def normalize_image(image: np.ndarray, mask: np.ndarray) -> np.ndarray:
     """
     Normalizes the pixel values of the given image to be between 0 and 1.
 
@@ -57,7 +57,7 @@ def normalize_image(image: np.ndarray) -> np.ndarray:
     min_val = image.min(axis=(0, 1), keepdims=True)
     max_val = image.max(axis=(0, 1), keepdims=True)
     normalized_image = (image - min_val) / (max_val - min_val)
-    return normalized_image
+    return normalized_image, mask
 
 
 def revert_normalization(image: torch.Tensor, mean, std):
