@@ -171,3 +171,4 @@ data/*
 scripts/config.sh
 **/*.nc
 **/*.tif
+data_dir/*
