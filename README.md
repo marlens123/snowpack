@@ -230,4 +230,18 @@ For the experiments presented here, we use SAM as the backbone model. We also us
 
 ![Augmentation Test Results](assets/train_test_transforms_results.png)
 
+To load the snowpack data for training, testing, or inference, we use a custom `Dataset` class defined in `snowpack/dynamic_tiled_dataset.py`, along with the previously mentioned transforms. This dataset expects `data_dir` to point to a directory containing two subdirectories: `masks` and `images`. The images and masks should have matching names, with masks ending in `_mask`, and both should be in `.tiff` format. The dataset class splits each image and its corresponding mask into multiple, possibly overlapping, tiles and presents them to the `DataLoader`. Below, we show three sample batches of training data with augmentations, using a batch size of 16. Each image is followed by its corresponding mask on the right.
+
+### Batch 1
+
+![Batch 1 Visualization](assets/batch_1.png)
+
+### Batch 2
+
+![Batch 2 Visualization](assets/batch_2.png)
+
+### Batch 3
+
+![Batch 3 Visualization](assets/batch_3.png)
+
 
