@@ -139,8 +139,8 @@ If you want to contribute to this repository, the development dependencies will 
 
 Download the SAM2 pre-training checkpoints by running:
 
-`!wget -O sam2_hiera_tiny.pt "https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_tiny.pt"`
-`!wget -O sam2_hiera_small.pt "https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_small.pt"`
+`!wget -O sam2_hiera_tiny.pt "https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2.1_hiera_tiny.pt"`
+`!wget -O sam2_hiera_small.pt "https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2.1_hiera_small.pt"`
 
 Please store the checkpoints in `snowpack/model/model_checkpoints`.
 

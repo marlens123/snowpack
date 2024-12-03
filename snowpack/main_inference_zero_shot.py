@@ -109,12 +109,20 @@ def main_worker(test_dataset, config):
 
         with torch.no_grad():
             predictor.set_image(image)
-            seg_map, _, _ = predictor.predict(
+            seg_map, score, _ = predictor.predict(
                 point_coords=input_prompt,
                 point_labels=point_labels
             )
 
+        prd_mask = torch.sigmoid(seg_map[:, 0])
+        inter = (orig_mask * (prd_mask > 0.5)).sum(1).sum(1)
+        iou = inter / (orig_mask.sum(1).sum(1) + (prd_mask > 0.5).sum(1).sum(1) - inter)
+        print("iou: " + str(iou))
+
+        import cv2
         seg_map = np.transpose(seg_map, (1, 2, 0))
+        gray_image = cv2.cvtColor(seg_map, cv2.COLOR_BGR2GRAY)
+        print(score)
 
         # Visualization: Show the original image, mask, and final segmentation side by side
         plt.figure(figsize=(18, 6))
@@ -131,13 +139,15 @@ def main_worker(test_dataset, config):
 
         plt.subplot(1, 3, 3)
         plt.title('Final Segmentation')
-        plt.imshow(seg_map, cmap='jet')
+        plt.imshow(seg_map, cmap='gray')
         plt.axis('off')
 
         plt.tight_layout()
 
         os.makedirs("prediction_results/", exist_ok=True)
         plt.savefig(f"prediction_results/{pref}_{j}.png")
+
+        plt.imsave(f"zero_gray{j}.png", gray_image, cmap='gray')
                 
 
 if __name__ == "__main__":

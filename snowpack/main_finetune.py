@@ -89,8 +89,8 @@ def main():
     train_transforms, test_transforms = None, None
 
     # dataset setup
-    train_ds = SnowDataset(train_images, train_masks, transforms=train_transforms, mask_type=cfg['mask_type'], size_strategy=cfg['resize_method'])
-    test_ds = SnowDataset(test_images, test_masks, transforms=test_transforms)
+    train_ds = SnowDataset(train_images, train_masks, transforms=train_transforms, mask_type=cfg['mask_type'], size_strategy=cfg['resize_method'], dilate=cfg['dilate'])
+    test_ds = SnowDataset(test_images, test_masks, transforms=test_transforms, dilate=cfg['dilate'])
 
     main_worker(args, train_dataset=train_ds, test_dataset=test_ds, config=cfg)
 
@@ -246,6 +246,40 @@ def main_worker(args, train_dataset, test_dataset, config):
                     point_coords=input_prompt,
                     point_labels=point_labels
                 )
+                wandb.log({"epoch": epoch, "val_score": scores})
+                _, unnorm_coords, labels, _ = predictor._prep_prompts(input_prompt, input_label, box=None, mask_logits=None, normalize_coords=True)
+                if unnorm_coords is None or labels is None or unnorm_coords.shape[0] == 0 or labels.shape[0] == 0:
+                    print("Continuing because of miscellaneous", flush=True)
+                    continue
+
+                sparse_embeddings, dense_embeddings = predictor.model.sam_prompt_encoder(
+                    points=(unnorm_coords, labels), boxes=None, masks=None,
+                )
+
+                batched_mode = unnorm_coords.shape[0] > 1
+                high_res_features = [feat_level[-1].unsqueeze(0) for feat_level in predictor._features["high_res_feats"]]
+                low_res_masks, prd_scores, _, _ = predictor.model.sam_mask_decoder(
+                    image_embeddings=predictor._features["image_embed"][-1].unsqueeze(0),
+                    image_pe=predictor.model.sam_prompt_encoder.get_dense_pe(),
+                    sparse_prompt_embeddings=sparse_embeddings,
+                    dense_prompt_embeddings=dense_embeddings,
+                    multimask_output=True,
+                    repeat_image=batched_mode,
+                    high_res_features=high_res_features,
+                )
+                prd_masks = predictor._transforms.postprocess_masks(low_res_masks, predictor._orig_hw[-1])
+
+                gt_mask = torch.tensor(mask.astype(np.float32)).cuda()
+                prd_mask = torch.sigmoid(prd_masks[:, 0])
+
+                inter = (gt_mask * (prd_mask > 0.5)).sum(1).sum(1)
+                val_iou = inter / (gt_mask.sum(1).sum(1) + (prd_mask > 0.5).sum(1).sum(1) - inter)
+
+                if epoch == 1:
+                    val_mean_iou = 0
+
+                val_mean_iou = val_mean_iou * 0.99 + 0.01 * np.mean(val_iou.cpu().detach().numpy())
+                wandb.log({"epoch": epoch, "val_iou": val_mean_iou})
 
     FINETUNED_MODEL = FINETUNED_MODEL_NAME + "_" + str(pref) + "_" + str(epoch) + ".torch"
     torch.save(predictor.model.state_dict(), os.path.join("snowpack/model/model_checkpoints", FINETUNED_MODEL))

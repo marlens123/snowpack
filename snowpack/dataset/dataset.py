@@ -7,13 +7,14 @@ import cv2
 class SnowDataset(BaseDataset):
     def __init__(
         self,
-        images: np.ndarray,
-        masks: np.ndarray, 
+        images,
+        masks, 
         transforms = None,
         size_strategy: str = 'resize_simple',
         mask_type: str = 'boundary',
         num_points: int = 50,
         resized_image_size: tuple = (1024, 1024),
+        dilate: bool = False,
     ):
         assert len(images) == len(masks)
         assert size_strategy in ['resize_simple', 'resize_retain_aspect', 'row_chunks', 'single_chunk']
@@ -25,6 +26,7 @@ class SnowDataset(BaseDataset):
         self.size_strategy = size_strategy
         self.resized_image_size = resized_image_size
         self.mask_type = mask_type
+        self.dilate = dilate
 
         self.images = images
         self.masks = masks
@@ -140,7 +142,7 @@ class SnowDataset(BaseDataset):
         return normalized_image
 
     @staticmethod
-    def create_boundary_mask(mask, revert=False):
+    def create_boundary_mask(mask, revert=False, dilate=False):
         # Perform edge detection in x and y direction
         sobel_x = cv2.Sobel(mask, cv2.CV_64F, 1, 0, ksize=3)
         sobel_y = cv2.Sobel(mask, cv2.CV_64F, 0, 1, ksize=3)
@@ -153,6 +155,15 @@ class SnowDataset(BaseDataset):
 
         # Convert to 0s and 1s
         binary_boundary = (boundary_mask > 0).astype(np.uint8)
+
+        # Create a kernel for dilation. This kernel will define how much the boundary will expand.
+        # You can change the kernel size to control how much you want to dilate the boundaries
+        kernel_size = 20  # You can adjust this size (e.g., 3, 5, 7, etc.)
+        kernel = np.ones((kernel_size, kernel_size), np.uint8)  # A square kernel
+
+        # Dilation operation
+        if dilate:
+            binary_boundary = cv2.dilate(binary_boundary, kernel, iterations=1)
 
         if revert:
             binary_boundary = 1 - binary_boundary
@@ -203,10 +214,10 @@ class SnowDataset(BaseDataset):
             image, mask = self.transform(image, mask)
 
         if self.mask_type == 'boundary':
-            mask = self.create_boundary_mask(mask, revert=False)
+            mask = self.create_boundary_mask(mask, revert=False, dilate=self.dilate)
             prompt = np.expand_dims(self.get_points(mask, num_points=self.num_points), axis=1)
         elif self.mask_type == 'boundary_revert':
-            mask = self.create_boundary_mask(mask, revert=True)
+            mask = self.create_boundary_mask(mask, revert=True, dilate=self.dilate)
             prompt = np.expand_dims(self.get_points(mask, num_points=self.num_points), axis=1)
         elif self.mask_type == 'layer':
             prompt = None

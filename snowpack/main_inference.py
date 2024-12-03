@@ -75,7 +75,7 @@ def main():
     test_transforms = None
 
     # dataset setup
-    test_ds = SnowDataset(test_images, test_masks, transforms=test_transforms, mask_type=cfg['mask_type'])
+    test_ds = SnowDataset(test_images, test_masks, transforms=test_transforms, mask_type=cfg['mask_type'], dilate=cfg['dilate'])
 
     main_worker(test_dataset=test_ds, config=cfg)
 
@@ -142,6 +142,10 @@ def main_worker(test_dataset, config):
             # Combine masks to create the final segmentation map
             for i in range(sorted_masks.shape[0]):
                 mask = sorted_masks[i]
+                if mask.sum() == 0:
+                    print(f"Skipping mask at index {i} due to zero sum.")
+                    continue
+
                 if (mask * occupancy_mask).sum() / mask.sum() > 0.15:
                     continue
 
@@ -166,21 +170,30 @@ def main_worker(test_dataset, config):
         plt.imshow(np.squeeze(orig_mask), cmap='gray')
         plt.axis('off')
 
-        if args.prompt_type == "points":
-            # Plot points in different colors
-            colors = list(mcolors.TABLEAU_COLORS.values())
-            for i, point in enumerate(np.squeeze(input_prompt)):
-                plt.scatter(point[0], point[1], c=colors[i % len(colors)], s=100, label=f'Point {i+1}')
+        plt.subplot(1, 3, 2)
+        plt.title('Reference Mask and Prompts')
+        plt.imshow(np.squeeze(orig_mask), cmap='gray')
+        plt.axis('off')
+
+        #if args.prompt_type == "points":
+       #     # Plot points in different colors
+       #     colors = list(mcolors.TABLEAU_COLORS.values())
+       #     for i, point in enumerate(np.squeeze(input_prompt)):
+       #         plt.scatter(point[0], point[1], c=colors[i % len(colors)], s=100, label=f'Point {i+1}')
 
         plt.subplot(1, 3, 3)
         plt.title('Final Segmentation')
-        plt.imshow(seg_map, cmap='jet')
+        plt.imshow(seg_map, cmap='gray')
         plt.axis('off')
 
         plt.tight_layout()
 
         os.makedirs("prediction_results/", exist_ok=True)
         plt.savefig(f"prediction_results/{store_pref}_{j}.png")
+
+        import cv2
+        #gray_image = cv2.cvtColor(seg_map, cv2.COLOR_BGR2GRAY)
+        plt.imsave(f"grayed{j}.png", seg_map, cmap='gray')
                 
 
 if __name__ == "__main__":
