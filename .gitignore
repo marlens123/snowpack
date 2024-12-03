@@ -180,3 +180,4 @@ data/*
 scripts/config.sh
 **/*.nc
 **/*.tif
+poetry
