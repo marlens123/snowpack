@@ -57,6 +57,10 @@ parser.add_argument(
     default="sea-ice"
 )
 
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+parser.add_argument('--multiclass', default=False, type=bool) ###########
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+
 def main():
     args = parser.parse_args()
 
@@ -150,10 +154,16 @@ def main_worker(args, train_dataset, test_dataset, config):
 
 #######################################################################################################################################
 #######################################################################################################################################
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+    if args.multiclass:
+       class_weights = torch.load('weights_20_2.pt').cuda()
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
 
     # Initialize scheduler
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.2) # 500 , 250, gamma = 0.1
     accumulation_steps = 4
+
+
 
     for epoch in range(1, NUM_EPOCHS + 1):
         with torch.cuda.amp.autocast():
@@ -200,12 +210,42 @@ def main_worker(args, train_dataset, test_dataset, config):
                 )
                 prd_masks = predictor._transforms.postprocess_masks(low_res_masks, predictor._orig_hw[-1])
 
-                gt_mask = torch.tensor(mask.astype(np.float32)).cuda()
-                prd_mask = torch.sigmoid(prd_masks[:, 0])
-                seg_loss = (-gt_mask * torch.log(prd_mask + 0.000001) - (1 - gt_mask) * torch.log((1 - prd_mask) + 0.00001)).mean()
 
-                inter = (gt_mask * (prd_mask > 0.5)).sum(1).sum(1)
-                iou = inter / (gt_mask.sum(1).sum(1) + (prd_mask > 0.5).sum(1).sum(1) - inter)
+                # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+                if args.multiclass:
+                    # _transforms.postprocess_masks needs to maintain the shape [batch_size, n_classes, H, W]
+                    # might need to do:
+                    # if args.multiclass:
+                    #     prd_masks = F.interpolate(low_res_masks, size=predictor._orig_hw[-1], mode="bilinear", align_corners=False)
+                    
+                    gt_mask = torch.tensor(mask.astype(np.long)).cuda()  # Use integer labels for classes
+                    prd_mask = F.softmax(prd_masks, dim=1)  # Apply softmax across the class channels
+
+                    ## we might want to do class weighing
+                    seg_loss = F.cross_entropy(prd_masks, gt_mask, weight=class_weights)
+
+                    # seg_loss = F.cross_entropy(prd_masks, gt_mask)  # Compute cross-entropy loss
+                    pred_labels = torch.argmax(prd_mask, dim=1)  # Predicted class labels
+                    iou_per_class = []
+                    for cls in range(prd_mask.shape[1]):  # Loop over classes
+                        inter = ((pred_labels == cls) & (gt_mask == cls)).sum()
+                        union = ((pred_labels == cls) | (gt_mask == cls)).sum()
+                        if union > 0:
+                            iou_per_class.append((inter / union).item())
+                    mean_iou = np.mean(iou_per_class) if iou_per_class else 0
+
+                    for cls, iou in enumerate(iou_per_class):
+                        wandb.log({f"iou_class_{cls}": iou})
+                # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+                # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ binary ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+                else:
+                    gt_mask = torch.tensor(mask.astype(np.float32)).cuda()
+                    prd_mask = torch.sigmoid(prd_masks[:, 0])
+                    seg_loss = (-gt_mask * torch.log(prd_mask + 0.000001) - (1 - gt_mask) * torch.log((1 - prd_mask) + 0.00001)).mean()
+
+                    inter = (gt_mask * (prd_mask > 0.5)).sum(1).sum(1)
+                    iou = inter / (gt_mask.sum(1).sum(1) + (prd_mask > 0.5).sum(1).sum(1) - inter)
+                # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ binary ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
                 score_loss = torch.abs(prd_scores[:, 0] - iou).mean()
                 loss = seg_loss + score_loss * 0.05
 
@@ -226,8 +266,11 @@ def main_worker(args, train_dataset, test_dataset, config):
 
                 if epoch == 1:
                     mean_iou = 0
-
-                mean_iou = mean_iou * 0.99 + 0.01 * np.mean(iou.cpu().detach().numpy())
+                    
+                # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ binary ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+                if not args.multiclass:
+                    mean_iou = mean_iou * 0.99 + 0.01 * np.mean(iou.cpu().detach().numpy())
+                # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ binary ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
 
                 print("Epoch " + str(epoch) + ":\t", "Train Accuracy (IoU) = ", mean_iou)
                 wandb.log({"epoch": epoch, "train_loss": loss, "train_iou": mean_iou})
@@ -242,10 +285,25 @@ def main_worker(args, train_dataset, test_dataset, config):
 
             with torch.no_grad():
                 predictor.set_image(image)
-                masks, scores, _ = predictor.predict(
-                    point_coords=input_prompt,
-                    point_labels=point_labels
-                )
+
+                # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+                if args.multiclass:
+                    masks, scores, _ = predictor.predict(
+                        point_coords=input_prompt,
+                        point_labels=point_labels,
+                        multimask_output=True
+                    )
+                    prd_mask = F.softmax(masks, dim=1)  # Apply softmax
+                    pred_labels = torch.argmax(prd_mask, dim=1)
+                # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+                # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ binary ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+                else:
+                    masks, scores, _ = predictor.predict(
+                        point_coords=input_prompt,
+                        point_labels=point_labels
+                    )
+                # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ binary ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+
                 wandb.log({"epoch": epoch, "val_score": scores})
                 _, unnorm_coords, labels, _ = predictor._prep_prompts(input_prompt, input_label, box=None, mask_logits=None, normalize_coords=True)
                 if unnorm_coords is None or labels is None or unnorm_coords.shape[0] == 0 or labels.shape[0] == 0:
@@ -268,12 +326,49 @@ def main_worker(args, train_dataset, test_dataset, config):
                     high_res_features=high_res_features,
                 )
                 prd_masks = predictor._transforms.postprocess_masks(low_res_masks, predictor._orig_hw[-1])
+                
 
-                gt_mask = torch.tensor(mask.astype(np.float32)).cuda()
-                prd_mask = torch.sigmoid(prd_masks[:, 0])
+                # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+                if args.multiclass:
+                    # _transforms.postprocess_masks needs to maintain the shape [batch_size, n_classes, H, W]
+                    # might need to do:
+                    # if args.multiclass:
+                    #     prd_masks = F.interpolate(low_res_masks, size=predictor._orig_hw[-1], mode="bilinear", align_corners=False)
 
-                inter = (gt_mask * (prd_mask > 0.5)).sum(1).sum(1)
-                val_iou = inter / (gt_mask.sum(1).sum(1) + (prd_mask > 0.5).sum(1).sum(1) - inter)
+                    # Apply softmax to get class probabilities
+                    prd_mask = F.softmax(prd_masks, dim=1)  # Shape: [batch_size, n_classes, H, W]
+
+                    # Get predicted class labels
+                    pred_labels = torch.argmax(prd_mask, dim=1)  # Shape: [batch_size, H, W]
+
+                    # Ground truth mask
+                    gt_mask = torch.tensor(mask.astype(np.long)).cuda()  # Shape: [batch_size, H, W]
+
+                    # IoU computation per class
+                    iou_per_class = []
+                    for cls in range(prd_mask.shape[1]):  # Loop over classes
+                        # Intersection and Union for the current class
+                        inter = ((pred_labels == cls) & (gt_mask == cls)).sum().item()
+                        union = ((pred_labels == cls) | (gt_mask == cls)).sum().item()
+
+                        if union > 0:
+                            iou_per_class.append(inter / union)  # IoU for this class
+
+                    # Mean IoU across all classes
+                    mean_iou = np.mean(iou_per_class) if iou_per_class else 0
+
+                    # Log metrics
+                    for cls, iou in enumerate(iou_per_class):
+                        wandb.log({f"val_iou_class_{cls}": iou})
+                # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+                # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ binary ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+            
+                else:
+                    gt_mask = torch.tensor(mask.astype(np.float32)).cuda()
+                    prd_mask = torch.sigmoid(prd_masks[:, 0])
+                    inter = (gt_mask * (prd_mask > 0.5)).sum(1).sum(1)
+                    val_iou = inter / (gt_mask.sum(1).sum(1) + (prd_mask > 0.5).sum(1).sum(1) - inter)
+                # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ binary ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
 
                 if epoch == 1:
                     val_mean_iou = 0
