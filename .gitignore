@@ -181,3 +181,4 @@ scripts/config.sh
 **/*.nc
 **/*.tif
 poetry
+!weights_20_2.pt
