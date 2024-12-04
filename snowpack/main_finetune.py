@@ -170,147 +170,233 @@ def main_worker(args, train_dataset, test_dataset, config):
     # Initialize scheduler
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.2) # 500 , 250, gamma = 0.1
     accumulation_steps = 4
+
+
+
     for epoch in range(1, NUM_EPOCHS + 1):
-        predictor.model.train()  # Ensure the model is in training mode
-        epoch_loss = 0.0  # Track the cumulative loss for the epoch
-
-        for step, tup in enumerate(train_loader):
-            image = np.array(tup[0].squeeze(0))
-            mask = np.array(tup[1].squeeze(0))  # Ground truth mask
-            input_prompt = np.array(tup[2].squeeze(0))
-            num_masks = tup[3].squeeze(0)
-
-            if image is None or mask is None or num_masks == 0:
-                print("Continuing due to empty image, mask, or no masks", flush=True)
-                continue
-
-            predictor.set_image(image)
-
-            optimizer.zero_grad()
-
-            with torch.cuda.amp.autocast():
-                if args.multiclass:
-                    # Multiclass option
-                    binary_gt_masks = convert_to_binary_masks(mask, n_classes)
-
-                    binary_prd_masks = []
-                    for cls in range(n_classes):
-                        binary_mask = (predictor.model.sam_mask_decoder.predict(image) == cls).float()
-                        binary_prd_masks.append(binary_mask)
-
-                    binary_prd_masks = torch.stack(binary_prd_masks, dim=0)
-
-                    total_loss = 0
-                    for cls in range(n_classes):
-                        loss_per_class = F.binary_cross_entropy_with_logits(
-                            binary_prd_masks[cls], binary_gt_masks[cls]
-                        )
-                        total_loss += loss_per_class
-
-                    total_loss /= n_classes
-
-                else:
-                    # Binary option
-                    gt_mask = torch.tensor(mask.astype(np.float32)).cuda()
-                    prd_mask = torch.sigmoid(predictor.model.sam_mask_decoder.predict(image))
-                    total_loss = (-gt_mask * torch.log(prd_mask + 1e-6) - (1 - gt_mask) * torch.log(1 - prd_mask + 1e-6)).mean()
-
-            scaler.scale(total_loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
-
-            epoch_loss += total_loss.item()
-
-        # Scheduler step after epoch
-        scheduler.step()
-
-        # Log epoch-level metrics
-        wandb.log({"epoch": epoch, "epoch_train_loss": epoch_loss / len(train_loader)})
-        print(f"Epoch {epoch}/{NUM_EPOCHS}: Train Loss = {epoch_loss / len(train_loader):.4f}")
-
-                        
-
-        # Validate
-        predictor.model.eval()  # Ensure the model is in evaluation mode
-        val_loss = 0.0  # Track cumulative validation loss
-        iou_scores = []  # Store IoU for each class or binary IoU
-
-        with torch.no_grad():
-            for step, tup in enumerate(val_loader):
+        with torch.cuda.amp.autocast():
+            for _, tup in enumerate(train_loader):
                 image = np.array(tup[0].squeeze(0))
-                mask = np.array(tup[1].squeeze(0))  # Ground truth mask
+                mask = np.array(tup[1].squeeze(0))
                 input_prompt = np.array(tup[2].squeeze(0))
                 num_masks = tup[3].squeeze(0)
 
                 if image is None or mask is None or num_masks == 0:
-                    print("Skipping validation due to empty data", flush=True)
+                    print("Continuing because empty image, mask, or no number of masks", flush=True)
+                    continue
+
+                input_label = np.ones((num_masks, 1))
+
+                if not isinstance(input_prompt, np.ndarray) or not isinstance(input_label, np.ndarray):
+                    print("Continuing because prompt or label is not a numpy array", flush=True)
+                    continue
+
+                if input_prompt.size == 0 or input_label.size == 0:
+                    print("Continuing because size of prompt of label is zero", flush=True)
                     continue
 
                 predictor.set_image(image)
+                _, unnorm_coords, labels, _ = predictor._prep_prompts(input_prompt, input_label, box=None, mask_logits=None, normalize_coords=True)
+                if unnorm_coords is None or labels is None or unnorm_coords.shape[0] == 0 or labels.shape[0] == 0:
+                    print("Continuing because of miscellaneous", flush=True)
+                    continue
 
+                sparse_embeddings, dense_embeddings = predictor.model.sam_prompt_encoder(
+                    points=(unnorm_coords, labels), boxes=None, masks=None,
+                )
+
+                batched_mode = unnorm_coords.shape[0] > 1
+                high_res_features = [feat_level[-1].unsqueeze(0) for feat_level in predictor._features["high_res_feats"]]
+                low_res_masks, prd_scores, _, _ = predictor.model.sam_mask_decoder(
+                    image_embeddings=predictor._features["image_embed"][-1].unsqueeze(0),
+                    image_pe=predictor.model.sam_prompt_encoder.get_dense_pe(),
+                    sparse_prompt_embeddings=sparse_embeddings,
+                    dense_prompt_embeddings=dense_embeddings,
+                    multimask_output=True,
+                    repeat_image=batched_mode,
+                    high_res_features=high_res_features,
+                )
+                prd_masks = predictor._transforms.postprocess_masks(low_res_masks, predictor._orig_hw[-1])
+
+
+                # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
                 if args.multiclass:
-                    # Multiclass validation
                     binary_gt_masks = convert_to_binary_masks(mask, n_classes)
 
                     binary_prd_masks = []
                     for cls in range(n_classes):
-                        binary_mask = (predictor.model.sam_mask_decoder.predict(image) == cls).float()
+                        # binary_mask_logits = predictor.predict(image, class_prompt=cls) #### ?
+                        # binary_prd_masks.append(binary_mask_logits)
+                        binary_mask = (prd_masks == cls).float() 
                         binary_prd_masks.append(binary_mask)
 
                     binary_prd_masks = torch.stack(binary_prd_masks, dim=0)
 
-                    total_loss = 0
-                    iou_per_class = []
-
+                    loss = 0
                     for cls in range(n_classes):
-                        loss_per_class = F.binary_cross_entropy_with_logits(
-                            binary_prd_masks[cls], binary_gt_masks[cls]
-                        )
-                        total_loss += loss_per_class
+                        loss += F.binary_cross_entropy_with_logits(binary_prd_masks[cls], binary_gt_masks[cls])
+                    loss /= n_classes
 
-                        # Calculate IoU for each class
+                    iou_per_class = []
+                    for cls in range(n_classes):
                         pred_binary_mask = torch.sigmoid(binary_prd_masks[cls]) > 0.5
                         inter = (pred_binary_mask & binary_gt_masks[cls].bool()).sum().item()
                         union = (pred_binary_mask | binary_gt_masks[cls].bool()).sum().item()
                         if union > 0:
                             iou_per_class.append(inter / union)
 
-                    total_loss /= n_classes
                     mean_iou = np.mean(iou_per_class) if iou_per_class else 0
-                    iou_scores.extend(iou_per_class)  # Collect IoUs for all classes
 
-                    # Log class-specific IoUs
+                    for cls, iou in enumerate(iou_per_class):
+                        wandb.log({f"iou_class_{cls}": iou})
+
+
+
+                # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+                # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ binary ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+                else:
+                    gt_mask = torch.tensor(mask.astype(np.float32)).cuda()
+                    prd_mask = torch.sigmoid(prd_masks[:, 0])
+                    seg_loss = (-gt_mask * torch.log(prd_mask + 0.000001) - (1 - gt_mask) * torch.log((1 - prd_mask) + 0.00001)).mean()
+
+                    inter = (gt_mask * (prd_mask > 0.5)).sum(1).sum(1)
+                    iou = inter / (gt_mask.sum(1).sum(1) + (prd_mask > 0.5).sum(1).sum(1) - inter)
+                    score_loss = torch.abs(prd_scores[:, 0] - iou).mean()
+                    loss = seg_loss + score_loss * 0.05
+
+                # Apply gradient accumulation
+                    loss = loss / accumulation_steps
+                # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ binary ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+
+                scaler.scale(loss).backward()
+
+                # Clip gradients
+                torch.nn.utils.clip_grad_norm_(predictor.model.parameters(), max_norm=1.0)
+
+                if epoch % accumulation_steps == 0:
+                    scaler.step(optimizer)
+                    scaler.update()
+                    predictor.model.zero_grad()
+
+                # Update scheduler
+                scheduler.step()
+
+                if epoch == 1:
+                    mean_iou = 0
+                    
+                # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ binary ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+                if not args.multiclass:
+                    mean_iou = mean_iou * 0.99 + 0.01 * np.mean(iou.cpu().detach().numpy())
+                # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ binary ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+
+                print("Epoch " + str(epoch) + ":\t", "Train Accuracy (IoU) = ", mean_iou)
+                wandb.log({"epoch": epoch, "train_loss": loss, "train_iou": mean_iou})
+                
+
+        # Validate
+        for _, tup in enumerate(val_loader):
+            image = np.array(tup[0].squeeze(0))
+            mask = np.array(tup[1].squeeze(0))
+            input_prompt = np.array(tup[2].squeeze(0))
+            point_labels = np.ones([input_prompt.shape[0], 1])
+
+            with torch.no_grad():
+                predictor.set_image(image)
+
+                # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+                if args.multiclass:
+                    masks, scores, _ = predictor.predict(
+                        point_coords=input_prompt,
+                        point_labels=point_labels,
+                        multimask_output=True
+                    )
+                    binary_prd_masks = []  # Store predictions for each class
+                    for cls in range(n_classes):
+                        # Predict binary mask for class `cls`
+                        binary_mask_logits = predictor.predict(image, class_prompt=cls)  # Adjust prompt if necessary
+                        binary_prd_masks.append(binary_mask_logits)
+
+                    # Stack binary predictions into a tensor of shape [n_classes, H, W]
+                    binary_prd_masks = torch.stack(binary_prd_masks, dim=0)
+
+                    pred_labels = torch.argmax(prd_mask, dim=1)
+                # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+                # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ binary ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+                else:
+                    masks, scores, _ = predictor.predict(
+                        point_coords=input_prompt,
+                        point_labels=point_labels
+                    )
+                # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ binary ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+
+                wandb.log({"epoch": epoch, "val_score": scores})
+                _, unnorm_coords, labels, _ = predictor._prep_prompts(input_prompt, input_label, box=None, mask_logits=None, normalize_coords=True)
+                if unnorm_coords is None or labels is None or unnorm_coords.shape[0] == 0 or labels.shape[0] == 0:
+                    print("Continuing because of miscellaneous", flush=True)
+                    continue
+
+                sparse_embeddings, dense_embeddings = predictor.model.sam_prompt_encoder(
+                    points=(unnorm_coords, labels), boxes=None, masks=None,
+                )
+
+                batched_mode = unnorm_coords.shape[0] > 1
+                high_res_features = [feat_level[-1].unsqueeze(0) for feat_level in predictor._features["high_res_feats"]]
+                low_res_masks, prd_scores, _, _ = predictor.model.sam_mask_decoder(
+                    image_embeddings=predictor._features["image_embed"][-1].unsqueeze(0),
+                    image_pe=predictor.model.sam_prompt_encoder.get_dense_pe(),
+                    sparse_prompt_embeddings=sparse_embeddings,
+                    dense_prompt_embeddings=dense_embeddings,
+                    multimask_output=True,
+                    repeat_image=batched_mode,
+                    high_res_features=high_res_features,
+                )
+                prd_masks = predictor._transforms.postprocess_masks(low_res_masks, predictor._orig_hw[-1])
+                
+
+                # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+                if args.multiclass:
+                    # Convert ground truth mask to binary masks
+                    binary_gt_masks = convert_to_binary_masks(mask, n_classes)
+
+                    # Generate predictions
+                    binary_prd_masks = []
+                    for cls in range(n_classes):
+                        binary_mask = (prd_masks == cls).float()  # Assuming `prd_masks` contains logits for all classes
+                        binary_prd_masks.append(binary_mask)
+
+                    # Stack predictions for all classes
+                    binary_prd_masks = torch.stack(binary_prd_masks, dim=0)
+
+                    # Compute IoU per class
+                    iou_per_class = []
+                    for cls in range(n_classes):
+                        pred_binary_mask = torch.sigmoid(binary_prd_masks[cls]) > 0.5
+                        inter = (pred_binary_mask & binary_gt_masks[cls].bool()).sum().item()
+                        union = (pred_binary_mask | binary_gt_masks[cls].bool()).sum().item()
+                        if union > 0:
+                            iou_per_class.append(inter / union)
+
+                    # Mean IoU across classes
+                    mean_iou = np.mean(iou_per_class) if iou_per_class else 0
+
+                    # Log metrics
                     for cls, iou in enumerate(iou_per_class):
                         wandb.log({f"val_iou_class_{cls}": iou})
-
+                # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+                # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ binary ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+            
                 else:
-                    # Binary validation
                     gt_mask = torch.tensor(mask.astype(np.float32)).cuda()
-                    prd_mask = torch.sigmoid(predictor.model.sam_mask_decoder.predict(image))
+                    prd_mask = torch.sigmoid(prd_masks[:, 0])
+                    inter = (gt_mask * (prd_mask > 0.5)).sum(1).sum(1)
+                    val_iou = inter / (gt_mask.sum(1).sum(1) + (prd_mask > 0.5).sum(1).sum(1) - inter)
+                # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ binary ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
 
-                    total_loss = (-gt_mask * torch.log(prd_mask + 1e-6) -
-                                (1 - gt_mask) * torch.log(1 - prd_mask + 1e-6)).mean()
+                if epoch == 1:
+                    val_mean_iou = 0
 
-                    inter = (gt_mask * (prd_mask > 0.5)).sum()
-                    union = (gt_mask + (prd_mask > 0.5) - (gt_mask * (prd_mask > 0.5))).sum()
-                    iou = inter / union if union > 0 else 0
-                    iou_scores.append(iou.item())
-
-                val_loss += total_loss.item()
-
-        # Compute final validation metrics
-        avg_val_loss = val_loss / len(val_loader)
-        overall_mean_iou = np.mean(iou_scores) if iou_scores else 0
-
-        # Log final validation metrics
-        wandb.log({
-            "epoch": epoch,
-            "val_loss": avg_val_loss,
-            "val_mean_iou": overall_mean_iou
-        })
-
-        print(f"Validation Loss: {avg_val_loss:.4f}, Mean IoU: {overall_mean_iou:.4f}")
-
+                val_mean_iou = val_mean_iou * 0.99 + 0.01 * np.mean(val_iou.cpu().detach().numpy())
+                wandb.log({"epoch": epoch, "val_iou": val_mean_iou})
 
     FINETUNED_MODEL = FINETUNED_MODEL_NAME + "_" + str(pref) + "_" + str(epoch) + ".torch"
     torch.save(predictor.model.state_dict(), os.path.join("snowpack/model/model_checkpoints", FINETUNED_MODEL))
