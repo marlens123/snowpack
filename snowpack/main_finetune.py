@@ -5,6 +5,7 @@ import json
 import os
 
 import torch
+import torch.nn as nn
 import torch.nn.parallel
 import torch.nn.functional as F
 import torch.backends.cudnn as cudnn
@@ -59,6 +60,24 @@ parser.add_argument(
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
 parser.add_argument('--multiclass', default=False, type=bool) ###########
+parser.add_argument('--nclasses', default=40, type=int) ###########
+
+class MulticlassSAMWrapper(nn.Module):
+    def __init__(self, sam_model, n_classes):
+        super().__init__()
+        self.sam_model = sam_model
+        self.multiclass_head = nn.Conv2d(
+            in_channels=256, ############################ double-check #############################
+            out_channels=n_classes,
+            kernel_size=1
+        )
+
+    def forward(self, *args, **kwargs):
+        # Obtain single-channel logits from SAM's mask decoder
+        single_channel_logits = self.sam_model(*args, **kwargs)
+        # Apply the custom multiclass head
+        return self.multiclass_head(single_channel_logits)
+
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
 
 def main():
@@ -126,6 +145,13 @@ def main_worker(args, train_dataset, test_dataset, config):
     model_cfg = 'configs/sam2.1/sam2.1_hiera_s.yaml'
 
     sam2_model = build_sam2(config_file=model_cfg, ckpt_path=sam2_checkpoint, device="cuda")
+
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+    if args.multiclass:
+        # assuming sam outputs [batch_size, 256, H, W]
+        sam2_model = MulticlassSAMWrapper(sam2_model, args.nclasses) 
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+
     predictor = SAM2ImagePredictor(sam2_model)
 
     # make prompt encoder and mask decoder trainable
@@ -213,6 +239,7 @@ def main_worker(args, train_dataset, test_dataset, config):
 
                 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
                 if args.multiclass:
+                    ###### prd_masks needs to be [batch_size, n_classes, H, W]
                     # _transforms.postprocess_masks needs to maintain the shape [batch_size, n_classes, H, W]
                     # might need to do:
                     # if args.multiclass:
