@@ -13,17 +13,21 @@ import torch.optim
 import torch.utils.data
 import torch.utils.data.distributed
 
-from .dataset.data_utils import load_tifs_resize_to_np, load_tifs_resize_to_np_retain_ratio
-from .dataset.dataset import SnowDataset
+# from .dataset.data_utils import load_tifs_resize_to_np, load_tifs_resize_to_np_retain_ratio
+# from .dataset.dataset import SnowDataset
+
+from dataset.data_utils import load_tifs_resize_to_np, load_tifs_resize_to_np_retain_ratio
+from dataset.dataset import SnowDataset
 
 from torch.utils.data import DataLoader
 
 from sam2.build_sam import build_sam2
 from sam2.sam2_image_predictor import SAM2ImagePredictor
 
-import wandb
 
-wandb.login()
+from tqdm import tqdm, trange
+
+import wandb
 
 parser = argparse.ArgumentParser(description="PyTorch Unet Training")
 
@@ -34,18 +38,33 @@ parser.add_argument(
     "--seed", default=84, type=int, help="seed for initializing training."
 )
 parser.add_argument("--gpu", default=0, help="GPU id to use.")
+# parser.add_argument(
+#     "--train_image_path", type=str, default="snowpack/data/images_train/"
+# )
+# parser.add_argument(
+#     "--train_mask_path", type=str, default="snowpack/data/masks_train/"
+# )
+# parser.add_argument(
+#     "--test_image_path", type=str, default="snowpack/data/images_test/"
+# )
+# parser.add_argument(
+#     "--test_mask_path", type=str, default="snowpack/data/masks_test/"
+# )
+
 parser.add_argument(
-    "--train_image_path", type=str, default="snowpack/data/images_train/"
+    "--train_image_path", type=str, default="snowpack/data/train/images/"
 )
 parser.add_argument(
-    "--train_mask_path", type=str, default="snowpack/data/masks_train/"
+    "--train_mask_path", type=str, default="snowpack/data/train/masks/"
 )
 parser.add_argument(
-    "--test_image_path", type=str, default="snowpack/data/images_test/"
+    "--test_image_path", type=str, default="snowpack/data/test/images/"
 )
 parser.add_argument(
-    "--test_mask_path", type=str, default="snowpack/data/masks_test/"
+    "--test_mask_path", type=str, default="snowpack/data/test/masks/"
 )
+
+
 parser.add_argument(
     '--use_wandb', 
     default=True, 
@@ -64,24 +83,65 @@ parser.add_argument('--nclasses', default=40, type=int) ###########
 
 class MulticlassSAMWrapper(nn.Module):
     def __init__(self, sam_model, n_classes):
-        super().__init__()
-        self.sam_model = sam_model
+        super(MulticlassSAMWrapper, self).__init__()
+        self.model = sam_model
+        self.sam_mask_decoder = self.model.sam_mask_decoder
+        self.sam_prompt_encoder = self.model.sam_prompt_encoder
+        self.image_size = self.model.image_size #### we can probably change this
+        self.no_mem_embed = self.model.no_mem_embed
+
+
+        self.device = self.model.device
+
         self.multiclass_head = nn.Conv2d(
-            in_channels=256, ############################ double-check #############################
+            in_channels=1, 
             out_channels=n_classes,
             kernel_size=1
         )
 
-    def forward(self, *args, **kwargs):
-        # Obtain single-channel logits from SAM's mask decoder
-        single_channel_logits = self.sam_model(*args, **kwargs)
-        # Apply the custom multiclass head
-        return self.multiclass_head(single_channel_logits)
+    def set_image(self, image):
+        return self.model.set_image(image)
+    
+    def forward_image(self, image):
+        return self.model.forward_image(image)
+    
+    def _prepare_backbone_features(self, features):
+        return self.model._prepare_backbone_features(features)
+    
+    def directly_add_no_mem_embed(self, sparse_embeddings, dense_embeddings):
+        return self.model.directly_add_no_mem_embed(sparse_embeddings, dense_embeddings)
 
+    def forward(self, sparse_embeddings, dense_embeddings, batched_mode, high_res_features, feats):
+        # Get image embeddings using forward_image
+        # image_embeddings = self.forward_image(image)
+
+        # # Decode masks with SAM's mask decoder
+        # low_res_masks, _, _, _ = self.sam_model.sam_mask_decoder(
+        #     image_embeddings=image_embeddings["image_embed"],
+        #     image_pe=image_embeddings["image_pe"],
+        #     sparse_prompt_embeddings=sparse_embeddings,
+        #     dense_prompt_embeddings=dense_embeddings,
+        #     multimask_output=False  # Ensure single output
+        # )
+
+        low_res_masks, prd_scores, _, _ = self.sam_mask_decoder(
+            image_embeddings=feats,
+            image_pe=self.model.sam_prompt_encoder.get_dense_pe(),
+            sparse_prompt_embeddings=sparse_embeddings,
+            dense_prompt_embeddings=dense_embeddings,
+            multimask_output=False,
+            repeat_image=batched_mode,
+            high_res_features=high_res_features,
+        )
+        # Pass through the multiclass head
+        return self.multiclass_head(low_res_masks)
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
 
 def main():
     args = parser.parse_args()
+
+    if args.use_wandb:
+        wandb.login()
 
     with open(args.path_to_config) as f:
         cfg = json.load(f)
@@ -118,6 +178,9 @@ def main():
     main_worker(args, train_dataset=train_ds, test_dataset=test_ds, config=cfg)
 
 def main_worker(args, train_dataset, test_dataset, config):
+    device_str = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device = torch.device(device_str)
+    
     # TODO: binarize / erode masks (so that we don't have points that are too close to the border)
     # Note: the eroded mask only seems to be used for prompt generation (slightly reduces mask size)
     # (do we have noisy boundaries?)
@@ -144,7 +207,7 @@ def main_worker(args, train_dataset, test_dataset, config):
     #with resources.open_text('snowpack', ) as file:
     model_cfg = 'configs/sam2.1/sam2.1_hiera_s.yaml'
 
-    sam2_model = build_sam2(config_file=model_cfg, ckpt_path=sam2_checkpoint, device="cuda")
+    sam2_model = build_sam2(config_file=model_cfg, ckpt_path=sam2_checkpoint, device=device)
 
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
     if args.multiclass:
@@ -161,7 +224,7 @@ def main_worker(args, train_dataset, test_dataset, config):
     # training setup
     optimizer=torch.optim.AdamW(params=predictor.model.parameters(),lr=config['learning_rate'],weight_decay=1e-4) #1e-5, weight_decay = 4e-5
     # mix precision
-    scaler = torch.cuda.amp.GradScaler()
+    scaler = torch.amp.GradScaler(device_str)
 
     #torch.cuda.set_device(args.gpu)
     #sam2_model = sam2_model.cuda(args.gpu)
@@ -182,7 +245,7 @@ def main_worker(args, train_dataset, test_dataset, config):
 #######################################################################################################################################
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
     if args.multiclass:
-       class_weights = torch.load('weights_20_2.pt').cuda()
+       class_weights = torch.load('weights_20_2.pt').to(device).to(torch.float32)
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
 
     # Initialize scheduler
@@ -191,8 +254,8 @@ def main_worker(args, train_dataset, test_dataset, config):
 
 
 
-    for epoch in range(1, NUM_EPOCHS + 1):
-        with torch.cuda.amp.autocast():
+    for epoch in trange(1, NUM_EPOCHS + 1):
+        with torch.amp.autocast(device_str):
             for _, tup in enumerate(train_loader):
                 image = np.array(tup[0].squeeze(0))
                 mask = np.array(tup[1].squeeze(0))
@@ -219,62 +282,78 @@ def main_worker(args, train_dataset, test_dataset, config):
                     print("Continuing because of miscellaneous", flush=True)
                     continue
 
-                sparse_embeddings, dense_embeddings = predictor.model.sam_prompt_encoder(
-                    points=(unnorm_coords, labels), boxes=None, masks=None,
-                )
-
-                batched_mode = unnorm_coords.shape[0] > 1
-                high_res_features = [feat_level[-1].unsqueeze(0) for feat_level in predictor._features["high_res_feats"]]
-                low_res_masks, prd_scores, _, _ = predictor.model.sam_mask_decoder(
-                    image_embeddings=predictor._features["image_embed"][-1].unsqueeze(0),
-                    image_pe=predictor.model.sam_prompt_encoder.get_dense_pe(),
-                    sparse_prompt_embeddings=sparse_embeddings,
-                    dense_prompt_embeddings=dense_embeddings,
-                    multimask_output=True,
-                    repeat_image=batched_mode,
-                    high_res_features=high_res_features,
-                )
-                prd_masks = predictor._transforms.postprocess_masks(low_res_masks, predictor._orig_hw[-1])
 
 
                 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
                 if args.multiclass:
-                    ###### prd_masks needs to be [batch_size, n_classes, H, W]
-                    # _transforms.postprocess_masks needs to maintain the shape [batch_size, n_classes, H, W]
-                    # might need to do:
-                    # if args.multiclass:
-                    #     prd_masks = F.interpolate(low_res_masks, size=predictor._orig_hw[-1], mode="bilinear", align_corners=False)
-                    
-                    gt_mask = torch.tensor(mask.astype(np.long)).cuda()  # Use integer labels for classes
-                    prd_mask = F.softmax(prd_masks, dim=1)  # Apply softmax across the class channels
+
+                    ######## lol
+                    sparse_embeddings = torch.zeros((1, 1, 256), device=predictor.model.device)
+                    dense_prompt_embeddings = torch.zeros((1, 256, 256), device=predictor.model.device)
+                    dense_embeddings = F.interpolate(
+                        dense_prompt_embeddings.unsqueeze(0),  # Add batch dimension
+                        size=(64, 64),  # Match expected spatial resolution of src
+                        mode='bilinear',
+                        align_corners=False
+                    ).squeeze(0)  # Remove batch dimension if necessary
+                    #########
+
+                    batched_mode = unnorm_coords.shape[0] > 1
+                    high_res_features = [feat_level[-1].unsqueeze(0) for feat_level in predictor._features["high_res_feats"]]
+
+                    low_res_masks = predictor.model(sparse_embeddings, dense_embeddings, batched_mode, high_res_features,
+                                                    predictor._features["image_embed"][-1].unsqueeze(0))
+                    prd_masks = predictor._transforms.postprocess_masks(low_res_masks, predictor._orig_hw[-1])
+
+                    gt_mask = torch.tensor(mask, dtype=torch.long).to(device)  # Use integer labels for classes
 
                     ## we might want to do class weighing
-                    seg_loss = F.cross_entropy(prd_masks, gt_mask, weight=class_weights)
-
-                    # seg_loss = F.cross_entropy(prd_masks, gt_mask)  # Compute cross-entropy loss
-                    pred_labels = torch.argmax(prd_mask, dim=1)  # Predicted class labels
+                    loss = F.cross_entropy(prd_masks, gt_mask, weight=class_weights)
+                    
+                    # IoU computation
+                    pred_labels = torch.argmax(prd_masks, dim=1)  # Shape: [batch_size, H, W]
                     iou_per_class = []
-                    for cls in range(prd_mask.shape[1]):  # Loop over classes
+                    for cls in range(prd_masks.shape[1]):  # Loop over classes
                         inter = ((pred_labels == cls) & (gt_mask == cls)).sum()
                         union = ((pred_labels == cls) | (gt_mask == cls)).sum()
                         if union > 0:
                             iou_per_class.append((inter / union).item())
                     mean_iou = np.mean(iou_per_class) if iou_per_class else 0
 
-                    for cls, iou in enumerate(iou_per_class):
-                        wandb.log({f"iou_class_{cls}": iou})
+                    if args.use_wandb:
+                        for cls, iou in enumerate(iou_per_class):
+                            wandb.log({f"iou_class_{cls}": iou})
                 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
                 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ binary ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
                 else:
-                    gt_mask = torch.tensor(mask.astype(np.float32)).cuda()
+                    sparse_embeddings, dense_embeddings = predictor.model.sam_prompt_encoder(
+                        points=(unnorm_coords, labels), boxes=None, masks=None,
+                    )
+
+                    batched_mode = unnorm_coords.shape[0] > 1
+                    high_res_features = [feat_level[-1].unsqueeze(0) for feat_level in predictor._features["high_res_feats"]]
+
+                    low_res_masks, prd_scores, _, _ = predictor.model.sam_mask_decoder(
+                        image_embeddings=predictor._features["image_embed"][-1].unsqueeze(0),
+                        image_pe=predictor.model.sam_prompt_encoder.get_dense_pe(),
+                        sparse_prompt_embeddings=sparse_embeddings,
+                        dense_prompt_embeddings=dense_embeddings,
+                        multimask_output=True,
+                        repeat_image=batched_mode,
+                        high_res_features=high_res_features,
+                    )
+                    prd_masks = predictor._transforms.postprocess_masks(low_res_masks, predictor._orig_hw[-1])
+
+                    gt_mask = torch.tensor(mask.astype(np.float32)).to(device)
                     prd_mask = torch.sigmoid(prd_masks[:, 0])
                     seg_loss = (-gt_mask * torch.log(prd_mask + 0.000001) - (1 - gt_mask) * torch.log((1 - prd_mask) + 0.00001)).mean()
 
                     inter = (gt_mask * (prd_mask > 0.5)).sum(1).sum(1)
                     iou = inter / (gt_mask.sum(1).sum(1) + (prd_mask > 0.5).sum(1).sum(1) - inter)
+                    score_loss = torch.abs(prd_scores[:, 0] - iou).mean()
+                    loss = seg_loss + score_loss * 0.05
                 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ binary ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
-                score_loss = torch.abs(prd_scores[:, 0] - iou).mean()
-                loss = seg_loss + score_loss * 0.05
+
 
                # Apply gradient accumulation
                 loss = loss / accumulation_steps
@@ -300,108 +379,93 @@ def main_worker(args, train_dataset, test_dataset, config):
                 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ binary ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
 
                 print("Epoch " + str(epoch) + ":\t", "Train Accuracy (IoU) = ", mean_iou)
-                wandb.log({"epoch": epoch, "train_loss": loss, "train_iou": mean_iou})
+                if args.use_wandb:
+                    wandb.log({"epoch": epoch, "train_loss": loss, "train_iou": mean_iou})
                 
 
         # Validate
         for _, tup in enumerate(val_loader):
             image = np.array(tup[0].squeeze(0))
             mask = np.array(tup[1].squeeze(0))
-            input_prompt = np.array(tup[2].squeeze(0))
-            point_labels = np.ones([input_prompt.shape[0], 1])
 
             with torch.no_grad():
                 predictor.set_image(image)
 
-                # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
                 if args.multiclass:
-                    masks, scores, _ = predictor.predict(
-                        point_coords=input_prompt,
-                        point_labels=point_labels,
-                        multimask_output=True
+                    # Generate embeddings (can be skipped for multiclass if prompts are not used)
+                    sparse_embeddings = torch.zeros((1, 1, 256), device=predictor.model.device)
+                    dense_prompt_embeddings = torch.zeros((1, 256, 256), device=predictor.model.device)
+                    dense_embeddings = F.interpolate(
+                        dense_prompt_embeddings.unsqueeze(0),
+                        size=(64, 64),
+                        mode='bilinear',
+                        align_corners=False
+                    ).squeeze(0)
+
+                    # Obtain predictions
+                    batched_mode = False
+                    high_res_features = [feat_level[-1].unsqueeze(0) for feat_level in predictor._features["high_res_feats"]]
+
+                    low_res_masks = predictor.model(
+                        sparse_embeddings, dense_embeddings, batched_mode, high_res_features,
+                        predictor._features["image_embed"][-1].unsqueeze(0)
                     )
-                    prd_mask = F.softmax(masks, dim=1)  # Apply softmax
-                    pred_labels = torch.argmax(prd_mask, dim=1)
-                # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
-                # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ binary ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
-                else:
-                    masks, scores, _ = predictor.predict(
-                        point_coords=input_prompt,
-                        point_labels=point_labels
-                    )
-                # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ binary ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
 
-                wandb.log({"epoch": epoch, "val_score": scores})
-                _, unnorm_coords, labels, _ = predictor._prep_prompts(input_prompt, input_label, box=None, mask_logits=None, normalize_coords=True)
-                if unnorm_coords is None or labels is None or unnorm_coords.shape[0] == 0 or labels.shape[0] == 0:
-                    print("Continuing because of miscellaneous", flush=True)
-                    continue
+                    prd_masks = predictor._transforms.postprocess_masks(low_res_masks, predictor._orig_hw[-1])
 
-                sparse_embeddings, dense_embeddings = predictor.model.sam_prompt_encoder(
-                    points=(unnorm_coords, labels), boxes=None, masks=None,
-                )
+                    # Prepare ground truth mask
+                    gt_mask = torch.tensor(mask, dtype=torch.long).to(device)
 
-                batched_mode = unnorm_coords.shape[0] > 1
-                high_res_features = [feat_level[-1].unsqueeze(0) for feat_level in predictor._features["high_res_feats"]]
-                low_res_masks, prd_scores, _, _ = predictor.model.sam_mask_decoder(
-                    image_embeddings=predictor._features["image_embed"][-1].unsqueeze(0),
-                    image_pe=predictor.model.sam_prompt_encoder.get_dense_pe(),
-                    sparse_prompt_embeddings=sparse_embeddings,
-                    dense_prompt_embeddings=dense_embeddings,
-                    multimask_output=True,
-                    repeat_image=batched_mode,
-                    high_res_features=high_res_features,
-                )
-                prd_masks = predictor._transforms.postprocess_masks(low_res_masks, predictor._orig_hw[-1])
-                
-
-                # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
-                if args.multiclass:
-                    # _transforms.postprocess_masks needs to maintain the shape [batch_size, n_classes, H, W]
-                    # might need to do:
-                    # if args.multiclass:
-                    #     prd_masks = F.interpolate(low_res_masks, size=predictor._orig_hw[-1], mode="bilinear", align_corners=False)
-
-                    # Apply softmax to get class probabilities
-                    prd_mask = F.softmax(prd_masks, dim=1)  # Shape: [batch_size, n_classes, H, W]
-
-                    # Get predicted class labels
-                    pred_labels = torch.argmax(prd_mask, dim=1)  # Shape: [batch_size, H, W]
-
-                    # Ground truth mask
-                    gt_mask = torch.tensor(mask.astype(np.long)).cuda()  # Shape: [batch_size, H, W]
-
-                    # IoU computation per class
+                    # IoU computation
+                    pred_labels = torch.argmax(prd_masks, dim=1)  # Shape: [batch_size, H, W]
                     iou_per_class = []
-                    for cls in range(prd_mask.shape[1]):  # Loop over classes
-                        # Intersection and Union for the current class
-                        inter = ((pred_labels == cls) & (gt_mask == cls)).sum().item()
-                        union = ((pred_labels == cls) | (gt_mask == cls)).sum().item()
-
+                    for cls in range(prd_masks.shape[1]):  # Loop over classes
+                        inter = ((pred_labels == cls) & (gt_mask == cls)).sum()
+                        union = ((pred_labels == cls) | (gt_mask == cls)).sum()
                         if union > 0:
-                            iou_per_class.append(inter / union)  # IoU for this class
+                            iou_per_class.append((inter / union).item())
 
-                    # Mean IoU across all classes
                     mean_iou = np.mean(iou_per_class) if iou_per_class else 0
 
-                    # Log metrics
-                    for cls, iou in enumerate(iou_per_class):
-                        wandb.log({f"val_iou_class_{cls}": iou})
-                # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
-                # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ binary ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
-            
+                    if args.use_wandb:
+                        for cls, iou in enumerate(iou_per_class):
+                            wandb.log({f"val_iou_class_{cls}": iou})
+                        wandb.log({"val_mean_iou": mean_iou})
+
+                    print(f"Validation Mean IoU: {mean_iou}")
                 else:
-                    gt_mask = torch.tensor(mask.astype(np.float32)).cuda()
+                    input_prompt = np.array(tup[2].squeeze(0))
+                    point_labels = np.ones([input_prompt.shape[0], 1])
+                    # Binary segmentation validation
+                    sparse_embeddings, dense_embeddings = predictor.model.sam_prompt_encoder(
+                        points=(unnorm_coords, labels), boxes=None, masks=None,
+                    )
+
+                    batched_mode = unnorm_coords.shape[0] > 1
+                    high_res_features = [feat_level[-1].unsqueeze(0) for feat_level in predictor._features["high_res_feats"]]
+
+                    low_res_masks, prd_scores, _, _ = predictor.model.sam_mask_decoder(
+                        image_embeddings=predictor._features["image_embed"][-1].unsqueeze(0),
+                        image_pe=predictor.model.sam_prompt_encoder.get_dense_pe(),
+                        sparse_prompt_embeddings=sparse_embeddings,
+                        dense_prompt_embeddings=dense_embeddings,
+                        multimask_output=True,
+                        repeat_image=batched_mode,
+                        high_res_features=high_res_features,
+                    )
+                    prd_masks = predictor._transforms.postprocess_masks(low_res_masks, predictor._orig_hw[-1])
+
+                    gt_mask = torch.tensor(mask.astype(np.float32)).to(device)
                     prd_mask = torch.sigmoid(prd_masks[:, 0])
                     inter = (gt_mask * (prd_mask > 0.5)).sum(1).sum(1)
                     val_iou = inter / (gt_mask.sum(1).sum(1) + (prd_mask > 0.5).sum(1).sum(1) - inter)
-                # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ binary ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
 
-                if epoch == 1:
-                    val_mean_iou = 0
+                    val_mean_iou = val_mean_iou * 0.99 + 0.01 * np.mean(val_iou.cpu().detach().numpy()) if epoch > 1 else np.mean(val_iou.cpu().detach().numpy())
+                    if args.use_wandb:
+                        wandb.log({"val_iou": val_mean_iou})
 
-                val_mean_iou = val_mean_iou * 0.99 + 0.01 * np.mean(val_iou.cpu().detach().numpy())
-                wandb.log({"epoch": epoch, "val_iou": val_mean_iou})
+                    print(f"Validation IoU: {val_mean_iou}")
+
 
     FINETUNED_MODEL = FINETUNED_MODEL_NAME + "_" + str(pref) + "_" + str(epoch) + ".torch"
     torch.save(predictor.model.state_dict(), os.path.join("snowpack/model/model_checkpoints", FINETUNED_MODEL))
