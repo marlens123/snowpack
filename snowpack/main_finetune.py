@@ -166,7 +166,7 @@ def main():
 
 
 
-def get_model_optimizer_scaler_scheduler(args, config, device, pref):
+def get_model_optimizer_scaler_scheduler(args, config, device):
     # model setup
     sam2_checkpoint = "snowpack/model/model_checkpoints/sam2.1_hiera_small.pt"
     #with resources.open_text('snowpack', ) as file:
@@ -187,8 +187,8 @@ def get_model_optimizer_scaler_scheduler(args, config, device, pref):
     # mix precision
     scaler = torch.amp.GradScaler(device.type)
     # wandb setup
-    if args.use_wandb:
-        wandb.watch(predictor.model, log_freq=2)
+    if args.use_wandb and not args.do_kfold:
+        wandb.watch(predictor.model, log_freq=16)
 
     # Initialize scheduler
     # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.2) # 500 , 250, gamma = 0.1
