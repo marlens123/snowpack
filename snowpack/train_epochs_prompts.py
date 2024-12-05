@@ -21,7 +21,7 @@ def multiclass_epoch(train_loader, predictor, accumulation_steps, epoch,
         mask = np.array(tup[1].squeeze(0))
         input_prompt = np.array(tup[2].squeeze(0))
         num_masks = tup[3].squeeze(0)
-        
+
         if image is None or mask is None or num_masks == 0:
             print("Continuing because empty image, mask, or no number of masks", flush=True)
             continue
@@ -125,7 +125,8 @@ def validate_multiclass(val_loader, predictor, epoch, device, args):
                 point_coords=input_prompt,
                 point_labels=point_labels
             )
-            wandb.log({"epoch": epoch, "val_score": scores})
+            if args.use_wandb:
+                wandb.log({"epoch": epoch, "val_score": scores})
             _, unnorm_coords, labels, _ = predictor._prep_prompts(input_prompt, input_label, box=None, mask_logits=None, normalize_coords=True)
             if unnorm_coords is None or labels is None or unnorm_coords.shape[0] == 0 or labels.shape[0] == 0:
                 print("Continuing because of miscellaneous", flush=True)
