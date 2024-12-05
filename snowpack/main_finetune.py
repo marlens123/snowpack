@@ -183,7 +183,7 @@ def get_model_optimizer_scaler_scheduler(args, config, device):
     predictor.model.sam_prompt_encoder.train(True)
 
     # training setup
-    optimizer=torch.optim.AdamW(params=predictor.model.parameters(),lr=config['learning_rate'],weight_decay=1e-4) #1e-5, weight_decay = 4e-5
+    optimizer=torch.optim.AdamW(params=predictor.model.parameters(),lr=config['learning_rate']*1000,weight_decay=1e-4) #1e-5, weight_decay = 4e-5
     # mix precision
     scaler = torch.amp.GradScaler(device.type)
     # wandb setup
@@ -251,7 +251,7 @@ def regular_train(args, cfg, train_dataset, test_dataset, accumulation_steps,
         num_workers=num_workers
     )
 
-    predictor, optimizer, scaler, scheduler = get_model_optimizer_scaler_scheduler(args, cfg, device, pref)
+    predictor, optimizer, scaler, scheduler = get_model_optimizer_scaler_scheduler(args, cfg, device)
 
     for epoch in trange(1, NUM_EPOCHS + 1):
         with torch.amp.autocast(device.type):
@@ -289,7 +289,7 @@ def k_fold(args, cfg, dataset, accumulation_steps, NUM_EPOCHS, device, pref, cla
         val_loader = DataLoader(val_subset, batch_size=1, shuffle=False, num_workers=num_workers)
         
         # Reinitialize model, optimizer, and scheduler
-        predictor, optimizer, scaler, scheduler = get_model_optimizer_scaler_scheduler(args, cfg, device, pref)
+        predictor, optimizer, scaler, scheduler = get_model_optimizer_scaler_scheduler(args, cfg, device)
         
         # Train and validate for the current fold
         # fold_metrics = train_and_validate(train_loader, val_loader, model, optimizer, scheduler, scaler, args, config)
