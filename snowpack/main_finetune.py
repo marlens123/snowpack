@@ -100,6 +100,14 @@ def main():
     with open(args.path_to_config) as f:
         config = json.load(f)
 
+    if args.use_wandb and args is not None:
+        wandb.init(
+            entity='sea-ice',
+            project='snowpack',
+            name=pref,
+        )
+        wandb.config.update(config)
+
     #set_seed(args.seed)
 
     if args.gpu != "cpu":
@@ -179,13 +187,7 @@ def get_model_optimizer_scaler_scheduler(args, config, device, pref):
     # mix precision
     scaler = torch.amp.GradScaler(device.type)
     # wandb setup
-    if args.use_wandb and args is not None:
-        wandb.init(
-            entity='sea-ice',
-            project='snowpack',
-            name=pref,
-        )
-        wandb.config.update(config)
+    if args.use_wandb:
         wandb.watch(predictor.model, log_freq=2)
 
     # Initialize scheduler
