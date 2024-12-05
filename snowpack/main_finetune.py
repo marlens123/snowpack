@@ -52,16 +52,7 @@ parser.add_argument("--gpu", default=0, help="GPU id to use.")
 # )
 
 parser.add_argument(
-    "--train_image_path", type=str, default="snowpack/data/train/images/"
-)
-parser.add_argument(
-    "--train_mask_path", type=str, default="snowpack/data/train/masks/"
-)
-parser.add_argument(
-    "--test_image_path", type=str, default="snowpack/data/test/images/"
-)
-parser.add_argument(
-    "--test_mask_path", type=str, default="snowpack/data/test/masks/"
+    "--data_path", type=str, default="snowpack/data/multiclass/"
 )
 
 
@@ -160,12 +151,19 @@ def main():
         else:
             print("CUDA is not available.")
 
+
+    train_image_path = f'{args.data_path}train/images/'
+    train_mask_path = f'{args.data_path}train/masks/'
+
+    test_image_path = f'{args.data_path}test/images/'
+    test_mask_path = f'{args.data_path}test/masks/'
+
     if cfg['resize_method'] == "resize_retain_aspect":
-        train_images, train_masks = load_tifs_resize_to_np_retain_ratio(args.train_image_path, args.train_mask_path)
-        test_images, test_masks = load_tifs_resize_to_np_retain_ratio(args.test_image_path, args.test_mask_path)
+        train_images, train_masks = load_tifs_resize_to_np_retain_ratio(train_image_path, train_mask_path)
+        test_images, test_masks = load_tifs_resize_to_np_retain_ratio(test_image_path, test_mask_path)
     elif cfg['resize_method'] == "resize_simple":
-        train_images, train_masks = load_tifs_resize_to_np(args.train_image_path, args.train_mask_path)
-        test_images, test_masks = load_tifs_resize_to_np(args.test_image_path, args.test_mask_path)
+        train_images, train_masks = load_tifs_resize_to_np(train_image_path, train_mask_path)
+        test_images, test_masks = load_tifs_resize_to_np(test_image_path, test_mask_path)
     else:
         raise NotImplementedError
 
@@ -263,21 +261,18 @@ def main_worker(args, train_dataset, test_dataset, config):
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
 
     # Initialize scheduler
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.2) # 500 , 250, gamma = 0.1
+    # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.2) # 500 , 250, gamma = 0.1
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.9) # 500 , 250, gamma = 0.1
     accumulation_steps = 4
 
 
 
     for epoch in trange(1, NUM_EPOCHS + 1):
+        optimizer.zero_grad()
         with torch.amp.autocast(device_str):
-            for _, tup in enumerate(train_loader):
+            for batch_idx, tup in enumerate(train_loader):
                 image = np.array(tup[0].squeeze(0))
                 mask = np.array(tup[1].squeeze(0))
-    
-            
-
-
-
 
                 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
                 if args.multiclass:
@@ -300,6 +295,9 @@ def main_worker(args, train_dataset, test_dataset, config):
                     
                     # IoU computation
                     pred_labels = torch.argmax(prd_masks, dim=1)  # Shape: [batch_size, H, W]
+                    # if epoch == 10:
+                    #     torch.save(pred_labels, f'{epoch}_pred_mask.pt')
+                    #     torch.save(gt_mask, f'{epoch}_gt_mask.pt')
                     iou_per_class = []
                     for cls in range(prd_masks.shape[1]):  # Loop over classes
                         inter = ((pred_labels == cls) & (gt_mask == cls)).sum()
@@ -367,23 +365,36 @@ def main_worker(args, train_dataset, test_dataset, config):
                 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ binary ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
 
 
-               # Apply gradient accumulation
-                loss = loss / accumulation_steps
+            #    # Apply gradient accumulation
+            #     loss = loss / accumulation_steps
+            #     scaler.scale(loss).backward()
+
+            #     # Clip gradients
+            #     torch.nn.utils.clip_grad_norm_(predictor.model.parameters(), max_norm=1.0)
+
+            #     if epoch % accumulation_steps == 0:
+            #         scaler.step(optimizer)
+            #         scaler.update()
+            #         predictor.model.zero_grad()
+
+                # Backward pass
                 scaler.scale(loss).backward()
 
-                # Clip gradients
-                torch.nn.utils.clip_grad_norm_(predictor.model.parameters(), max_norm=1.0)
+                # Gradient accumulation logic
+                if (batch_idx + 1) % accumulation_steps == 0 or (batch_idx + 1) == len(train_loader):
+                    # Gradient clipping (optional)
+                    torch.nn.utils.clip_grad_norm_(predictor.model.parameters(), max_norm=1.0)
 
-                if epoch % accumulation_steps == 0:
+                    # Step optimizer and scaler
                     scaler.step(optimizer)
                     scaler.update()
-                    predictor.model.zero_grad()
 
-                # Update scheduler
-                scheduler.step()
+                    # Reset gradients
+                    optimizer.zero_grad()
 
-                if epoch == 1:
-                    mean_iou = 0
+
+                # if epoch == 1:
+                #     mean_iou = 0
                     
                 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ binary ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
                 if not args.multiclass:
@@ -393,6 +404,8 @@ def main_worker(args, train_dataset, test_dataset, config):
                 print("Epoch " + str(epoch) + ":\t", "Train Accuracy (IoU) = ", mean_iou)
                 if args.use_wandb:
                     wandb.log({"epoch": epoch, "train_loss": loss, "train_iou": mean_iou})
+            # Update scheduler
+            scheduler.step()
                 
 
         # Validate
