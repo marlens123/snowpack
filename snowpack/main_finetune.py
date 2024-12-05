@@ -156,11 +156,11 @@ def main():
         k_fold(args, config, dataset, accumulation_steps, NUM_EPOCHS_K_FOLD, device, pref, class_weights, k=NUM_K_FOLDS)
 
     else:
-        train_dataset, test_dataset= get_dataset(config, args, train_image_path=f'{args.data_path}train/images/',
-                                                               train_mask_path=f'{args.data_path}train/masks/',
-                                                               test_image_path = f'{args.data_path}test/images/',
-                                                               test_mask_path = f'{args.data_path}test/masks/'
-                                                               )
+        train_dataset, test_dataset = get_dataset(config, args, train_image_path=f'{args.data_path}train/images/',
+                                                                train_mask_path=f'{args.data_path}train/masks/',
+                                                                test_image_path = f'{args.data_path}test/images/',
+                                                                test_mask_path = f'{args.data_path}test/masks/'
+                                                                )
     
         regular_train(args, config, train_dataset, test_dataset, accumulation_steps, FINETUNED_MODEL_NAME, NUM_EPOCHS, device, pref, class_weights)
 
