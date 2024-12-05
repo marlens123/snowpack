@@ -18,12 +18,12 @@ import torch.utils.data.distributed
 
 from dataset.data_utils import load_tifs_resize_to_np, load_tifs_resize_to_np_retain_ratio
 from dataset.dataset import SnowDataset
-from train_epochs import *
+from train_epochs_prompts import *
 
 from torch.utils.data import DataLoader
 
 from sam2.build_sam import build_sam2
-from sam2.sam2_image_predictor import SAM2ImagePredictor
+from sam2.sam2_image import SAM2ImagePredictor
 
 
 from tqdm import tqdm, trange
@@ -183,7 +183,7 @@ def get_model_optimizer_scaler_scheduler(args, config, device):
     predictor.model.sam_prompt_encoder.train(True)
 
     # training setup
-    optimizer=torch.optim.AdamW(params=predictor.model.parameters(),lr=config['learning_rate']*1000,weight_decay=1e-4) #1e-5, weight_decay = 4e-5
+    optimizer=torch.optim.AdamW(params=predictor.model.parameters(),lr=config['learning_rate'],weight_decay=1e-4) #1e-5, weight_decay = 4e-5
     # mix precision
     scaler = torch.amp.GradScaler(device.type)
     # wandb setup
