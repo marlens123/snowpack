@@ -90,6 +90,21 @@ class MulticlassSAMWrapper(nn.Module):
             kernel_size=1
         )
 
+
+        # self.multiclass_head = nn.Sequential(
+        #     nn.Conv2d(in_channels=1, out_channels=64, kernel_size=3, padding=1),
+        #     nn.BatchNorm2d(64),
+        #     nn.ReLU(),
+        #     nn.Dropout(0.3),
+        #     nn.Conv2d(in_channels=64, out_channels=n_classes, kernel_size=1)
+        # )
+
+        # self.multiclass_head = nn.Sequential(
+        #     nn.Conv2d(in_channels=1, out_channels=64, kernel_size=3, padding=1),  # Intermediate channels
+        #     nn.ReLU(),
+        #     nn.Conv2d(in_channels=64, out_channels=n_classes, kernel_size=1)  # Final output
+        # )
+
     def set_image(self, image):
         return self.model.set_image(image)
     
@@ -263,7 +278,7 @@ def main_worker(args, train_dataset, test_dataset, config):
     # Initialize scheduler
     # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.2) # 500 , 250, gamma = 0.1
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.9) # 500 , 250, gamma = 0.1
-    accumulation_steps = 4
+    accumulation_steps = 7
 
 
 
@@ -295,9 +310,7 @@ def main_worker(args, train_dataset, test_dataset, config):
                     
                     # IoU computation
                     pred_labels = torch.argmax(prd_masks, dim=1)  # Shape: [batch_size, H, W]
-                    # if epoch == 10:
-                    #     torch.save(pred_labels, f'{epoch}_pred_mask.pt')
-                    #     torch.save(gt_mask, f'{epoch}_gt_mask.pt')
+
                     iou_per_class = []
                     for cls in range(prd_masks.shape[1]):  # Loop over classes
                         inter = ((pred_labels == cls) & (gt_mask == cls)).sum()
@@ -364,20 +377,8 @@ def main_worker(args, train_dataset, test_dataset, config):
                     loss = seg_loss + score_loss * 0.05
                 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ binary ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
 
-
-            #    # Apply gradient accumulation
-            #     loss = loss / accumulation_steps
-            #     scaler.scale(loss).backward()
-
-            #     # Clip gradients
-            #     torch.nn.utils.clip_grad_norm_(predictor.model.parameters(), max_norm=1.0)
-
-            #     if epoch % accumulation_steps == 0:
-            #         scaler.step(optimizer)
-            #         scaler.update()
-            #         predictor.model.zero_grad()
-
                 # Backward pass
+                loss = loss / accumulation_steps
                 scaler.scale(loss).backward()
 
                 # Gradient accumulation logic
@@ -401,9 +402,9 @@ def main_worker(args, train_dataset, test_dataset, config):
                     mean_iou = mean_iou * 0.99 + 0.01 * np.mean(iou.cpu().detach().numpy())
                 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ binary ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
 
-                print("Epoch " + str(epoch) + ":\t", "Train Accuracy (IoU) = ", mean_iou)
+                print("Epoch " + str(epoch) + ":\t", "Train Accuracy (IoU) = ", mean_iou, f' Loss = {loss.detach().item()}')
                 if args.use_wandb:
-                    wandb.log({"epoch": epoch, "train_loss": loss, "train_iou": mean_iou})
+                    wandb.log({"epoch": epoch, "train_loss": loss, "train_iou": mean_iou, "loss": loss.detach().item()})
             # Update scheduler
             scheduler.step()
                 
