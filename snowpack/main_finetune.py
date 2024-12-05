@@ -183,7 +183,7 @@ def get_model_optimizer_scaler_scheduler(args, config, device):
     predictor.model.sam_prompt_encoder.train(True)
 
     # training setup
-    optimizer=torch.optim.AdamW(params=predictor.model.parameters(),lr=config['learning_rate']*100,weight_decay=1e-4) #1e-5, weight_decay = 4e-5
+    optimizer=torch.optim.AdamW(params=predictor.model.parameters(),lr=config['learning_rate'],weight_decay=1e-4) #1e-5, weight_decay = 4e-5
     # mix precision
     scaler = torch.amp.GradScaler(device.type)
     # wandb setup
