@@ -84,20 +84,20 @@ class MulticlassSAMWrapper(nn.Module):
 
         self.device = self.model.device
 
-        self.multiclass_head = nn.Conv2d(
-            in_channels=1, 
-            out_channels=n_classes,
-            kernel_size=1
-        )
-
-
-        # self.multiclass_head = nn.Sequential(
-        #     nn.Conv2d(in_channels=1, out_channels=64, kernel_size=3, padding=1),
-        #     nn.BatchNorm2d(64),
-        #     nn.ReLU(),
-        #     nn.Dropout(0.3),
-        #     nn.Conv2d(in_channels=64, out_channels=n_classes, kernel_size=1)
+        # self.multiclass_head = nn.Conv2d(
+        #     in_channels=1, 
+        #     out_channels=n_classes,
+        #     kernel_size=1
         # )
+
+
+        self.multiclass_head = nn.Sequential(
+            nn.Conv2d(in_channels=1, out_channels=64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Conv2d(in_channels=64, out_channels=n_classes, kernel_size=1)
+        )
 
         # self.multiclass_head = nn.Sequential(
         #     nn.Conv2d(in_channels=1, out_channels=64, kernel_size=3, padding=1),  # Intermediate channels
