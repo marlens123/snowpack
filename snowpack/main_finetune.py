@@ -87,7 +87,7 @@ parser.add_argument(
     action='store_true', 
     help='do multiclass training'
 )
-parser.add_argument('--n_classes', default=40, type=int) ########### black is no mask, I forgot |:
+parser.add_argument('--n_classes', default=40, type=int)
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
 
 
@@ -271,14 +271,13 @@ def regular_train(args, cfg, train_dataset, test_dataset, accumulation_steps,
 
 
 
-
 def k_fold(args, cfg, dataset, accumulation_steps, NUM_EPOCHS, device, pref, class_weights, k, num_workers=4):
     
     kfold = KFold(n_splits=k, shuffle=True, random_state=args.seed)
     
     fold_results = []  # To store results for each fold
     
-    for fold, (train_idx, val_idx) in enumerate(kfold.split(dataset)):
+    for fold, (train_idx, val_idx) in enumerate(tqdm(kfold.split(dataset))):
         print(f"Starting Fold {fold + 1}/{k}")
         
         # Split dataset
@@ -310,7 +309,7 @@ def k_fold(args, cfg, dataset, accumulation_steps, NUM_EPOCHS, device, pref, cla
             'final_val_iou': mean_val_iou,
             'loss': loss
             }
-        if args.do_wandb:
+        if args.use_wandb:
             wandb.log({'kfold_fold#': fold, 
                        'kfold_train_iou': mean_train_iou, 
                        'kfold_val_iou': mean_val_iou, 
