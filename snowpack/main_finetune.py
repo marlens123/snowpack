@@ -18,12 +18,12 @@ import torch.utils.data.distributed
 
 from dataset.data_utils import load_tifs_resize_to_np, load_tifs_resize_to_np_retain_ratio
 from dataset.dataset import SnowDataset
-from train_epochs_prompts import *
+from train_epochs import *
 
 from torch.utils.data import DataLoader
 
 from sam2.build_sam import build_sam2
-from sam2.sam2_image import SAM2ImagePredictor
+from sam2.sam2_image_predictor import SAM2ImagePredictor
 
 
 from tqdm import tqdm, trange
