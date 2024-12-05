@@ -231,8 +231,6 @@ def get_dataset(cfg, args, train_image_path=None,
 
 
 
-
-
 def regular_train(args, cfg, train_dataset, test_dataset, accumulation_steps, 
                   FINETUNED_MODEL_NAME, NUM_EPOCHS, device, pref, class_weights,
                   num_workers=4):
@@ -325,6 +323,5 @@ def k_fold(args, cfg, dataset, accumulation_steps, NUM_EPOCHS, device, pref, cla
 
 
     
-
 if __name__ == "__main__":
     main()
