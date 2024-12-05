@@ -182,3 +182,5 @@ scripts/config.sh
 **/*.tif
 poetry
 !weights_20_2.pt
+*.DS_Store
+*/sam2
