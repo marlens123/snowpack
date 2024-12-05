@@ -79,7 +79,7 @@ parser.add_argument(
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
 parser.add_argument('--multiclass', default=False, type=bool) ###########
-parser.add_argument('--nclasses', default=40, type=int) ###########
+parser.add_argument('--nclasses', default=40, type=int) ########### black is no mask, I forgot |:
 
 class MulticlassSAMWrapper(nn.Module):
     def __init__(self, sam_model, n_classes):
@@ -111,7 +111,7 @@ class MulticlassSAMWrapper(nn.Module):
     def directly_add_no_mem_embed(self, sparse_embeddings, dense_embeddings):
         return self.model.directly_add_no_mem_embed(sparse_embeddings, dense_embeddings)
 
-    def forward(self, sparse_embeddings, dense_embeddings, batched_mode, high_res_features, feats):
+    def forward(self, sparse_embeddings, dense_embeddings, high_res_features, feats):
         # Get image embeddings using forward_image
         # image_embeddings = self.forward_image(image)
 
@@ -130,7 +130,7 @@ class MulticlassSAMWrapper(nn.Module):
             sparse_prompt_embeddings=sparse_embeddings,
             dense_prompt_embeddings=dense_embeddings,
             multimask_output=False,
-            repeat_image=batched_mode,
+            repeat_image=False,
             high_res_features=high_res_features,
         )
         # Pass through the multiclass head
@@ -170,6 +170,10 @@ def main():
         raise NotImplementedError
 
     train_transforms, test_transforms = None, None
+
+
+    if args.multiclass:
+        cfg['mask_type'] = 'layer'
 
     # dataset setup
     train_ds = SnowDataset(train_images, train_masks, transforms=train_transforms, mask_type=cfg['mask_type'], size_strategy=cfg['resize_method'], dilate=cfg['dilate'])
@@ -246,6 +250,16 @@ def main_worker(args, train_dataset, test_dataset, config):
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
     if args.multiclass:
        class_weights = torch.load('weights_20_2.pt').to(device).to(torch.float32)
+       ######## lol
+       sparse_embeddings = torch.zeros((1, 1, 256), device=predictor.model.device)
+       dense_prompt_embeddings = torch.zeros((1, 256, 256), device=predictor.model.device)
+       dense_embeddings = F.interpolate(
+           dense_prompt_embeddings.unsqueeze(0),  # Add batch dimension
+           size=(64, 64),  # Match expected spatial resolution of src
+           mode='bilinear',
+           align_corners=False
+       ).squeeze(0)  # Remove batch dimension if necessary
+       #########
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
 
     # Initialize scheduler
@@ -259,54 +273,28 @@ def main_worker(args, train_dataset, test_dataset, config):
             for _, tup in enumerate(train_loader):
                 image = np.array(tup[0].squeeze(0))
                 mask = np.array(tup[1].squeeze(0))
-                input_prompt = np.array(tup[2].squeeze(0))
-                num_masks = tup[3].squeeze(0)
+    
+            
 
-                if image is None or mask is None or num_masks == 0:
-                    print("Continuing because empty image, mask, or no number of masks", flush=True)
-                    continue
-
-                input_label = np.ones((num_masks, 1))
-
-                if not isinstance(input_prompt, np.ndarray) or not isinstance(input_label, np.ndarray):
-                    print("Continuing because prompt or label is not a numpy array", flush=True)
-                    continue
-
-                if input_prompt.size == 0 or input_label.size == 0:
-                    print("Continuing because size of prompt of label is zero", flush=True)
-                    continue
-
-                predictor.set_image(image)
-                _, unnorm_coords, labels, _ = predictor._prep_prompts(input_prompt, input_label, box=None, mask_logits=None, normalize_coords=True)
-                if unnorm_coords is None or labels is None or unnorm_coords.shape[0] == 0 or labels.shape[0] == 0:
-                    print("Continuing because of miscellaneous", flush=True)
-                    continue
 
 
 
                 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
                 if args.multiclass:
 
-                    ######## lol
-                    sparse_embeddings = torch.zeros((1, 1, 256), device=predictor.model.device)
-                    dense_prompt_embeddings = torch.zeros((1, 256, 256), device=predictor.model.device)
-                    dense_embeddings = F.interpolate(
-                        dense_prompt_embeddings.unsqueeze(0),  # Add batch dimension
-                        size=(64, 64),  # Match expected spatial resolution of src
-                        mode='bilinear',
-                        align_corners=False
-                    ).squeeze(0)  # Remove batch dimension if necessary
-                    #########
+                    predictor.set_image(image)
 
-                    batched_mode = unnorm_coords.shape[0] > 1
+
+
+                    # batched_mode = unnorm_coords.shape[0] > 1
                     high_res_features = [feat_level[-1].unsqueeze(0) for feat_level in predictor._features["high_res_feats"]]
 
-                    low_res_masks = predictor.model(sparse_embeddings, dense_embeddings, batched_mode, high_res_features,
+                    low_res_masks = predictor.model(sparse_embeddings, dense_embeddings, high_res_features,
                                                     predictor._features["image_embed"][-1].unsqueeze(0))
                     prd_masks = predictor._transforms.postprocess_masks(low_res_masks, predictor._orig_hw[-1])
 
-                    gt_mask = torch.tensor(mask, dtype=torch.long).to(device)  # Use integer labels for classes
 
+                    gt_mask = torch.tensor(mask, dtype=torch.long).to(device) - 1 # since starting from 1 and not 0 lol
                     ## we might want to do class weighing
                     loss = F.cross_entropy(prd_masks, gt_mask, weight=class_weights)
                     
@@ -326,6 +314,30 @@ def main_worker(args, train_dataset, test_dataset, config):
                 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
                 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ binary ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
                 else:
+                    num_masks = tup[3].squeeze(0)
+
+                    if image is None or mask is None or num_masks == 0:
+                        print("Continuing because empty image, mask, or no number of masks", flush=True)
+                        continue
+
+                    input_prompt = np.array(tup[2].squeeze(0))
+
+                    input_label = np.ones((num_masks, 1))
+
+                    if not isinstance(input_prompt, np.ndarray) or not isinstance(input_label, np.ndarray):
+                        print("Continuing because prompt or label is not a numpy array", flush=True)
+                        continue
+
+                    if input_prompt.size == 0 or input_label.size == 0:
+                        print("Continuing because size of prompt of label is zero", flush=True)
+                        continue
+
+                    predictor.set_image(image)
+                    _, unnorm_coords, labels, _ = predictor._prep_prompts(input_prompt, input_label, box=None, mask_logits=None, normalize_coords=True)
+                    if unnorm_coords is None or labels is None or unnorm_coords.shape[0] == 0 or labels.shape[0] == 0:
+                        print("Continuing because of miscellaneous", flush=True)
+                        continue
+
                     sparse_embeddings, dense_embeddings = predictor.model.sam_prompt_encoder(
                         points=(unnorm_coords, labels), boxes=None, masks=None,
                     )
@@ -407,7 +419,7 @@ def main_worker(args, train_dataset, test_dataset, config):
                     high_res_features = [feat_level[-1].unsqueeze(0) for feat_level in predictor._features["high_res_feats"]]
 
                     low_res_masks = predictor.model(
-                        sparse_embeddings, dense_embeddings, batched_mode, high_res_features,
+                        sparse_embeddings, dense_embeddings, high_res_features,
                         predictor._features["image_embed"][-1].unsqueeze(0)
                     )
 
