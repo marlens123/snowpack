@@ -58,7 +58,7 @@ parser.add_argument("--gpu", default=0, help="GPU id to use.")
 # )
 
 parser.add_argument(
-    "--data_path", type=str, default="snowpack/data/multiclass/"
+    "--data_path", type=str, default="snowpack/data/multiclass_10_2/"
 )
 
 
@@ -134,6 +134,10 @@ def main():
     NUM_EPOCHS_K_FOLD = 20  # idk what this should be
     FINETUNED_MODEL_NAME = "snowpack_sam2"
     NUM_K_FOLDS = 3 # should be higher with a bigger batch size
+    # Very lazy config updates:
+    config['learning_rate'] = config['learning_rate'] * 100
+    if args.multiclass:
+            config['mask_type'] = 'layer'
     # TODO: NOTE: I multiplied the learning rate by 100, might want that/might not want that
     # also scheduler is now different and idk if that's good tbh (older/original version is commented out)
 
@@ -205,8 +209,6 @@ def get_dataset(cfg, args, train_image_path=None,
                            train_transforms=None,
                            test_transforms=None
                            ):
-    if args.multiclass:
-            cfg['mask_type'] = 'layer'
 
     if cfg['resize_method'] == "resize_retain_aspect":
         train_images, train_masks = load_tifs_resize_to_np_retain_ratio(train_image_path, train_mask_path)
