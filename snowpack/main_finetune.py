@@ -58,7 +58,7 @@ parser.add_argument("--gpu", default=0, help="GPU id to use.")
 # )
 
 parser.add_argument(
-    "--data_path", type=str, default="snowpack/data/multiclass_10_2/"
+    "--data_path", type=str, default="snowpack/data/multiclass_10_2/" # this one has 20 classes, not 40
 )
 
 
@@ -87,7 +87,7 @@ parser.add_argument(
     action='store_true', 
     help='do multiclass training'
 )
-parser.add_argument('--n_classes', default=40, type=int)
+parser.add_argument('--n_classes', default=20, type=int)
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
 
 
