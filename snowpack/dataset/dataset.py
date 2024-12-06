@@ -1,10 +1,8 @@
 from torch.utils.data import Dataset as BaseDataset
-from patchify import patchify
 import numpy as np
-import torch
 import cv2
 
-class SnowDataset(BaseDataset):
+class FullImageDataset(BaseDataset):
     def __init__(
         self,
         images,
@@ -17,7 +15,7 @@ class SnowDataset(BaseDataset):
         dilate: bool = False,
     ):
         assert len(images) == len(masks)
-        assert size_strategy in ['resize_simple', 'resize_retain_aspect', 'row_chunks', 'single_chunk']
+        assert size_strategy in ['resize_simple', 'resize_retain_aspect']
         assert mask_type in ['boundary', 'boundary_revert', 'layer']
 
         self.transforms = transforms
@@ -30,30 +28,6 @@ class SnowDataset(BaseDataset):
 
         self.images = images
         self.masks = masks
-        self.resized_images = []
-        self.resized_masks = []
-
-        # preprocess images and masks and store them in target_images and target_masks
-        #for i in range(len(images)):
-        #    self.change_size(images[i], masks[i], self.size_strategy)
-
-        print("Number of images: " + str(len(self.images)))
-        print("Number of masks: " + str(len(self.masks)))
-    
-    def change_size(self, image, mask):
-        if "chunks" in self.size_strategy:
-             # idea: during inference, patchify then unpatchify the image
-             # for training, patchify the image and mask row wise to avoid too homogeneous patches
-            chunked_image, chunked_mask = self.chunk_row_wise(image, mask)
-
-            self.resized_images.append(chunked_image)
-            self.resized_masks.append(chunked_mask)
-
-        elif self.size_strategy == "resize":
-            # problem with resizing: 2-times interpolation, which can lead to loss of information
-            self.resized_images.append(cv2.resize(image, self.resized_image_size))
-            # use nearest neighbour interpolation to make sure that masks remain categorical
-            self.resized_masks.append(cv2.resize(mask, self.resized_image_size, interpolation=cv2.INTER_NEAREST))
 
     @staticmethod
     def get_points(binarized_mask, num_points=50):
@@ -67,52 +41,7 @@ class SnowDataset(BaseDataset):
                 points.append([yx[1], yx[0]])
 
         points = np.array(points)
-
         return points
-
-    # TODO
-    def get_bounding_box(binarized_mask):
-        """
-        Get bounding boxes for each unique label in the mask with added perturbation to the coordinates.
-        
-        Parameters:
-        ground_truth_map (numpy array): The mask where non-zero values indicate the region of interest.
-        
-        Returns:
-        bboxes (list of lists): A list of bounding box coordinates [x_min, y_min, x_max, y_max] for each label.
-        """
-        boundary_label = 1
-        bboxes = []
-        
-        for label in boundary_label:
-            indices = np.argwhere(binarized_mask == label)
-            if len(indices) == 0:
-                continue
-            
-            # Calculate bounding box coordinates
-            y_min, x_min = np.min(indices[:, :2], axis=0)
-            y_max, x_max = np.max(indices[:, :2], axis=0)
-            
-            bbox = [x_min, y_min, x_max, y_max]
-            bboxes.append(bbox)
-            bboxes = [[int(element) for element in sublist] for sublist in bboxes]
-        return bboxes
-    
-
-    # TODO
-    @staticmethod
-    def binarize_single_object(original_mask):
-
-        # Initialize a single binary mask
-        binary_mask = np.zeros_like(original_mask, dtype=np.uint8)
-
-        # Get binary masks and combine them into a single mask
-        inds = np.unique(original_mask)[1:]  # Skip the background (index 0)
-        for ind in inds:
-            mask = (original_mask == ind).astype(np.uint8)  # Create binary mask for each unique index
-            binary_mask = np.maximum(binary_mask, mask)  # Combine with the existing binary mask
-
-        return binary_mask
 
 
     def expand_grayscale_channel(self, image):
@@ -172,34 +101,6 @@ class SnowDataset(BaseDataset):
         
         return binary_boundary
 
-    # TODO
-    def chunk_row_wise(self, image, mask, target_image_size):
-        # first extract single column from image and mask, then chunk it
-        # shape of image and mask: (H, W)
-        # shape of resulting patches: (n_patches, 1, target_image_size, target_image_size)
-
-        # random column idx
-        # note: this will never consider the rightmost pixel columns of the image, if the image is not divisible by the target_image_size
-        max_idx = int(image.shape[1] / target_image_size)
-        chunk_column_idx = np.random.randint(0, max_idx)
-
-        image_column = image[:, chunk_column_idx]
-        mask_column = mask[:, chunk_column_idx]
-        # step defines the overlap / offset between patches
-        image_column_patches = patchify(image_column, (target_image_size, target_image_size), step=1)
-        mask_column_patches = patchify(mask_column, (target_image_size, target_image_size), step=1)
-
-        print(image_column_patches.shape)
-        print(mask_column_patches.shape)
-
-        for j in range(image_column_patches.shape[0]):
-            image_patch = image_column_patches[j, 0]
-            mask_patch = mask_column_patches[j, 0]
-
-            # append image and mask patch to list
-            self.target_images.append(image_patch)
-            self.target_masks.append(mask_patch)
-
     def __len__(self):
         return len(self.images)
 
@@ -223,13 +124,8 @@ class SnowDataset(BaseDataset):
             prompt = None
         
         image = self.expand_grayscale_channel(image)
-        # image = image.permute(2, 0, 1)
         mask = np.expand_dims(mask, axis=0)
         num_masks = self.num_points
-
-        # from: https://github.com/facebookresearch/sam2/blob/main/sam2/configs/sam2.1_training/sam2.1_hiera_b%2B_MOSE_finetune.yaml
-        # mean: [0.485, 0.456, 0.406]
-        # std: [0.229, 0.224, 0.225]
 
         # apply transformations
         # TODO: check that interpolation=NEAREST NEIGHBOUR in rotation, and resizing!

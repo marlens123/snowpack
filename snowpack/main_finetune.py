@@ -13,7 +13,9 @@ import torch.utils.data
 import torch.utils.data.distributed
 
 from .dataset.data_utils import load_tifs_resize_to_np, load_tifs_resize_to_np_retain_ratio
-from .dataset.dataset import SnowDataset
+from .dataset.dataset import FullImageDataset
+from .dataset.dynamic_tiled_dataset import DynamicImagePatchesDataset
+from .dataset.augmentation import get_transformation
 
 from torch.utils.data import DataLoader
 
@@ -33,6 +35,8 @@ parser.add_argument(
     "--seed", default=84, type=int, help="seed for initializing training."
 )
 parser.add_argument("--gpu", default=0, help="GPU id to use.")
+parser.add_argument("--train_path", type=str, default="snowpack/data/train/")
+parser.add_argument("--test_path", type=str, default="snowpack/data/test/")
 parser.add_argument(
     "--train_image_path", type=str, default="snowpack/data/images_train/"
 )
@@ -86,11 +90,24 @@ def main():
     else:
         raise NotImplementedError
 
-    train_transforms, test_transforms = None, None
+
+    ### NOTE: Those need to be moved into a config file
+
+    # mean and std from pretraining dataset (SA-V)
+    # from: https://github.com/facebookresearch/sam2/blob/main/sam2/configs/sam2.1_training/sam2.1_hiera_b%2B_MOSE_finetune.yaml
+    mean = [0.485, 0.456, 0.406]
+    std = [0.229, 0.224, 0.225]
+    boundary_mask = True
+    revert = True
+    dilate = True
+    train_transforms, test_transforms = get_transformation(mean=mean, std=std)
+    patch_size = 1024
+    overlap = 0
+    kernel_size=20
 
     # dataset setup
-    train_ds = SnowDataset(train_images, train_masks, transforms=train_transforms, mask_type=cfg['mask_type'], size_strategy=cfg['resize_method'], dilate=cfg['dilate'])
-    test_ds = SnowDataset(test_images, test_masks, transforms=test_transforms, dilate=cfg['dilate'])
+    train_ds = DynamicImagePatchesDataset(data_dir=args.train_path, transform=train_transforms, patch_size=patch_size, overlap=overlap, inference_mode=False, boundary_mask=boundary_mask, revert=revert, dilate=dilate, kernel_size=kernel_size)
+    test_ds = DynamicImagePatchesDataset(data_dir=args.test_path, transform=test_transforms, patch_size=patch_size, overlap=overlap, inference_mode=False, boundary_mask=boundary_mask, revert=revert, dilate=dilate, kernel_size=kernel_size)
 
     main_worker(args, train_dataset=train_ds, test_dataset=test_ds, config=cfg)
 
