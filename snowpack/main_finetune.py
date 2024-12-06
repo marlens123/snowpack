@@ -137,7 +137,9 @@ def main():
     # Very lazy config updates:
     config['learning_rate'] = config['learning_rate'] * 100
     if args.multiclass:
-            config['mask_type'] = 'layer'
+        config['mask_type'] = 'layer'
+    if args.multiclass:
+        print(f'Currently doing multiclass with {args.n_classes} classes. Need to have data folder location and and class weights to match')
     # TODO: NOTE: I multiplied the learning rate by 100, might want that/might not want that
     # also scheduler is now different and idk if that's good tbh (older/original version is commented out)
 
@@ -147,7 +149,7 @@ def main():
 
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
     if args.multiclass:
-        class_weights = torch.load('weights_20_2.pt').to(device).to(torch.float32)
+        class_weights = torch.load('weights_10_2.pt').to(device).to(torch.float32)
     else:
         class_weights = None
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
