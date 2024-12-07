@@ -45,7 +45,7 @@ def multiclass_epoch(train_loader, predictor, accumulation_steps, epoch,
                 gt_mask -= - 1 # since starting from 1 and not 0
 
             ## we might want to do class weighing
-            loss = F.cross_entropy(prd_masks, gt_mask, weight=class_weights)
+            loss = F.cross_entropy(prd_masks, gt_mask, weight=class_weights.to(prd_masks.dtype))
             
             # IoU computation
             pred_labels = torch.argmax(prd_masks, dim=1)  # Shape: [batch_size, H, W]
