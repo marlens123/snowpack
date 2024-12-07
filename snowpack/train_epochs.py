@@ -69,6 +69,7 @@ def multiclass_epoch(train_loader, predictor, accumulation_steps, epoch,
         # Gradient accumulation logic
         if (batch_idx + 1) % accumulation_steps == 0 or (batch_idx + 1) == len(train_loader):
             # Gradient clipping (optional)
+            scaler.unscale_(optimizer)  
             torch.nn.utils.clip_grad_norm_(predictor.model.parameters(), max_norm=1.0)
 
             # Step optimizer and scaler
@@ -212,6 +213,7 @@ def binary_epoch(train_loader, predictor, accumulation_steps, epoch,
         scaler.scale(loss).backward()
 
         # Clip gradients
+        scaler.unscale_(optimizer)  
         torch.nn.utils.clip_grad_norm_(predictor.model.parameters(), max_norm=1.0)
 
         if epoch % accumulation_steps == 0:
