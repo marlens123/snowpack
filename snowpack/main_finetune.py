@@ -285,7 +285,7 @@ def regular_train(args, cfg, train_dataset, test_dataset, accumulation_steps,
     predictor, optimizer, scaler, scheduler = get_model_optimizer_scaler_scheduler(args, cfg, device)
 
     for epoch in trange(1, NUM_EPOCHS + 1):
-        with torch.amp.autocast(device.type):
+        with torch.amp.autocast(device.type, enabled=False):
             if args.multiclass:
                 mean_train_iou, loss = multiclass_epoch(train_loader, predictor, accumulation_steps, epoch, 
                     scheduler, scaler, optimizer, device, class_weights, args, first_class_is_1)
@@ -325,7 +325,7 @@ def k_fold(args, cfg, dataset, accumulation_steps, NUM_EPOCHS, device, pref, cla
         # Train and validate for the current fold
         # fold_metrics = train_and_validate(train_loader, val_loader, model, optimizer, scheduler, scaler, args, config)
         for epoch in trange(1, NUM_EPOCHS + 1):
-            with torch.amp.autocast(device.type):
+            with torch.amp.autocast(device.type, enabled=False):
                 if args.multiclass:
                     mean_train_iou, loss = multiclass_epoch(train_loader, predictor, accumulation_steps, epoch, 
                                                       scheduler, scaler, optimizer, device, class_weights, args, first_class_is_1)
