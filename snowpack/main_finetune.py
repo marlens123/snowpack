@@ -144,7 +144,7 @@ def main():
         config['mask_type'] = 'layer'
         print(f'Currently doing multiclass with {args.n_classes} classes. Need to have data folder location match up too')
         
-    class_weights = get_class_weights(args.data_path) if args.multiclass else None
+    class_weights = get_class_weights(args.data_path, device) if args.multiclass else None
     # TODO: NOTE: I multiplied the learning rate by 100, might want that/might not want that
     # also scheduler is now different and idk if that's good tbh (older/original version is commented out)
 
@@ -330,7 +330,7 @@ def k_fold(args, cfg, dataset, accumulation_steps, NUM_EPOCHS, device, pref, cla
 
 
 
-def get_class_weights(data_path):
+def get_class_weights(data_path, device):
     class_pixel_counts = Counter()
     masks_train = [f'{data_path}train/masks/{i}' for i in os.listdir(f'{data_path}train/masks/') if 'store' not in i]
     masks_test = [f'{data_path}test/masks/{i}' for i in os.listdir(f'{data_path}test/masks/') if 'store' not in i]
@@ -351,7 +351,7 @@ def get_class_weights(data_path):
     # Normalize weights (optional, for better scaling)
     normalized_weights = {cls: weight / max(class_weights.values()) for cls, weight in class_weights.items()}
 
-    return torch.tensor(list((normalized_weights.values())))
+    return torch.tensor(list((normalized_weights.values()))).to(device).to(torch.float32)
 
 
 
