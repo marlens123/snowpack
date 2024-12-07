@@ -13,7 +13,7 @@ import wandb
 
 
 def multiclass_epoch(train_loader, predictor, accumulation_steps, epoch, 
-                     scheduler, scaler, optimizer, device, class_weights, args):
+                     scheduler, scaler, optimizer, device, class_weights, args, first_class_is_1):
     epoch_mean_iou, loss_mean_iou = [], []
     ######## lol
     sparse_embeddings = torch.zeros((1, 1, 256), device=predictor.model.device)
@@ -39,7 +39,10 @@ def multiclass_epoch(train_loader, predictor, accumulation_steps, epoch,
         prd_masks = predictor._transforms.postprocess_masks(low_res_masks, predictor._orig_hw[-1])
 
 
-        gt_mask = torch.tensor(mask, dtype=torch.long).to(device) - 1 # since starting from 1 and not 0 lol
+        gt_mask = torch.tensor(mask, dtype=torch.long).to(device) 
+        if first_class_is_1:
+            gt_mask -= - 1 # since starting from 1 and not 0
+
         ## we might want to do class weighing
         loss = F.cross_entropy(prd_masks, gt_mask, weight=class_weights)
         
@@ -85,7 +88,7 @@ def multiclass_epoch(train_loader, predictor, accumulation_steps, epoch,
 
 
                 
-def validate_multiclass(val_loader, predictor, epoch, device, args):
+def validate_multiclass(val_loader, predictor, epoch, device, args, first_class_is_1):
     epoch_mean_iou = []
     for _, tup in enumerate(val_loader):
         image = np.array(tup[0].squeeze(0))
@@ -116,7 +119,9 @@ def validate_multiclass(val_loader, predictor, epoch, device, args):
             prd_masks = predictor._transforms.postprocess_masks(low_res_masks, predictor._orig_hw[-1])
 
             # Prepare ground truth mask
-            gt_mask = torch.tensor(mask, dtype=torch.long).to(device) - 1
+            gt_mask = torch.tensor(mask, dtype=torch.long).to(device)
+            if first_class_is_1:
+                gt_mask -= 1
             
 
             # IoU computation

@@ -4,6 +4,8 @@ import numpy as np
 import json
 import os
 
+
+
 import torch
 import torch.nn as nn
 import torch.nn.parallel
@@ -27,6 +29,8 @@ from sam2.sam2_image_predictor import SAM2ImagePredictor
 
 
 from tqdm import tqdm, trange
+from collections import Counter
+import cv2
 
 import wandb
 
@@ -58,7 +62,7 @@ parser.add_argument("--gpu", default=0, help="GPU id to use.")
 # )
 
 parser.add_argument(
-    "--data_path", type=str, default="snowpack/data/multiclass_10_2/" # this one has 20 classes, not 40
+    "--data_path", type=str, default="snowpack/data/multiclass_10_2/" # this one has 20 classes
 )
 
 
@@ -138,8 +142,9 @@ def main():
     config['learning_rate'] = config['learning_rate'] * 100
     if args.multiclass:
         config['mask_type'] = 'layer'
-    if args.multiclass:
-        print(f'Currently doing multiclass with {args.n_classes} classes. Need to have data folder location and class weights matching up')
+        print(f'Currently doing multiclass with {args.n_classes} classes. Need to have data folder location match up too')
+        
+    class_weights = get_class_weights(args.data_path) if args.multiclasclass_weights else None
     # TODO: NOTE: I multiplied the learning rate by 100, might want that/might not want that
     # also scheduler is now different and idk if that's good tbh (older/original version is commented out)
 
@@ -147,12 +152,6 @@ def main():
     accumulation_steps = 7
 
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
-    if args.multiclass:
-        class_weights = torch.load('weights_10_2.pt').to(device).to(torch.float32)
-    else:
-        class_weights = None
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
 
     if args.do_kfold:
         # train here has to include everything
@@ -264,13 +263,13 @@ def regular_train(args, cfg, train_dataset, test_dataset, accumulation_steps,
         with torch.amp.autocast(device.type):
             if args.multiclass:
                 mean_train_iou, loss = multiclass_epoch(train_loader, predictor, accumulation_steps, epoch, 
-                    scheduler, scaler, optimizer, device, class_weights, args)
-                mean_test_iou = validate_multiclass(val_loader, predictor, epoch, device, args)
+                    scheduler, scaler, optimizer, device, class_weights, args, first_class_is_1=True)
+                mean_test_iou = validate_multiclass(val_loader, predictor, epoch, device, args, first_class_is_1=True)
 
             else:
-                mean_train_iou, loss = multiclass_epoch(train_loader, predictor, accumulation_steps, epoch, 
+                mean_train_iou, loss = binary_epoch(train_loader, predictor, accumulation_steps, epoch, 
                     scheduler, scaler, optimizer, device, class_weights, args)
-                mean_test_iou = validate_multiclass(val_loader, predictor, epoch, device, args)
+                mean_test_iou = validate_binary(val_loader, predictor, epoch, device, args)
 
 
     FINETUNED_MODEL = FINETUNED_MODEL_NAME + "_" + str(pref) + "_" + str(epoch) + ".torch"
@@ -304,13 +303,13 @@ def k_fold(args, cfg, dataset, accumulation_steps, NUM_EPOCHS, device, pref, cla
             with torch.amp.autocast(device.type):
                 if args.multiclass:
                     mean_train_iou, loss = multiclass_epoch(train_loader, predictor, accumulation_steps, epoch, 
-                                                      scheduler, scaler, optimizer, device, class_weights, args)
-                    mean_val_iou = validate_multiclass(val_loader, predictor, epoch, device, args)
+                                                      scheduler, scaler, optimizer, device, class_weights, args, first_class_is_1=True)
+                    mean_val_iou = validate_multiclass(val_loader, predictor, epoch, device, args, first_class_is_1=True)
 
                 else:
-                    mean_train_iou, loss = multiclass_epoch(train_loader, predictor, accumulation_steps, epoch, 
+                    mean_train_iou, loss = binary_epoch(train_loader, predictor, accumulation_steps, epoch, 
                                                       scheduler, scaler, optimizer, device, class_weights, args)
-                    mean_val_iou = validate_multiclass(val_loader, predictor, epoch, device, args)
+                    mean_val_iou = validate_binary(val_loader, predictor, epoch, device, args)
         fold_metrics = {
             'final_train_iou': mean_train_iou,  # Replace with actual metrics from the training loop
             'final_val_iou': mean_val_iou,
@@ -328,6 +327,34 @@ def k_fold(args, cfg, dataset, accumulation_steps, NUM_EPOCHS, device, pref, cla
     k_fold_metrics = {key: sum(f[key] for f in fold_results) / k for key in fold_results[0]}
     print('Average metrics across folds:', k_fold_metrics)
     torch.save(k_fold_metrics, 'snowpack/k_fold_metrics.pt')
+
+
+
+def get_class_weights(data_path):
+    class_pixel_counts = Counter()
+    masks_train = [f'{data_path}train/masks/{i}' for i in os.listdir(f'{data_path}train/masks/') if 'store' not in i]
+    masks_test = [f'{data_path}test/masks/{i}' for i in os.listdir(f'{data_path}test/masks/') if 'store' not in i]
+    masks_train.extend(masks_test)
+    masks_paths = masks_train
+
+    for mask_path in masks_paths:
+        mask = cv2.imread(mask_path, cv2.IMREAD_UNCHANGED)
+            
+        unique, counts = np.unique(mask, return_counts=True)
+        print(unique)
+        class_pixel_counts.update(dict(zip(unique, counts)))
+
+    total_pixels = sum(class_pixel_counts.values())
+
+    # Compute weights as inverse of class frequency
+    class_weights = {cls: total_pixels / count for cls, count in class_pixel_counts.items()}
+    class_weights = dict(sorted(class_weights.items()))
+
+    # Normalize weights (optional, for better scaling)
+    normalized_weights = {cls: weight / max(class_weights.values()) for cls, weight in class_weights.items()}
+
+    return torch.tensor(list((normalized_weights.values())))
+
 
 
     
