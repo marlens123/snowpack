@@ -231,7 +231,10 @@ def get_dataset(cfg, args, train_image_path=None,
     else:
         raise NotImplementedError
     # dataset setup
-    test_dataset = SnowDataset(test_images, test_masks, transforms=test_transforms, dilate=cfg['dilate'], mask_type=cfg['mask_type'])
+    if args.multiclass:
+        test_dataset = SnowDataset(test_images, test_masks, transforms=test_transforms, dilate=cfg['dilate'], mask_type=cfg['mask_type'])
+    else:
+        test_dataset = SnowDataset(test_images, test_masks, transforms=test_transforms, dilate=cfg['dilate'])
 
     return train_dataset, test_dataset
 
