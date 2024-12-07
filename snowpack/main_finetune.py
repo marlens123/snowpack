@@ -4,8 +4,6 @@ import numpy as np
 import json
 import os
 
-
-
 import torch
 import torch.nn as nn
 import torch.nn.parallel
@@ -20,7 +18,9 @@ import torch.utils.data.distributed
 
 from dataset.data_utils import load_tifs_resize_to_np, load_tifs_resize_to_np_retain_ratio
 from dataset.dataset import SnowDataset
+from dataset.dynamic_tiled_dataset import DynamicImagePatchesDataset
 from train_epochs import *
+from dataset.augmentation import get_transformation
 
 from torch.utils.data import DataLoader
 
@@ -33,7 +33,6 @@ from collections import Counter
 import cv2
 
 import wandb
-
 
 from sklearn.model_selection import KFold
 import copy
@@ -48,23 +47,10 @@ parser.add_argument(
     "--seed", default=84, type=int, help="seed for initializing training."
 )
 parser.add_argument("--gpu", default=0, help="GPU id to use.")
-# parser.add_argument(
-#     "--train_image_path", type=str, default="snowpack/data/images_train/"
-# )
-# parser.add_argument(
-#     "--train_mask_path", type=str, default="snowpack/data/masks_train/"
-# )
-# parser.add_argument(
-#     "--test_image_path", type=str, default="snowpack/data/images_test/"
-# )
-# parser.add_argument(
-#     "--test_mask_path", type=str, default="snowpack/data/masks_test/"
-# )
 
 parser.add_argument(
     "--data_path", type=str, default="snowpack/data/multiclass_10_2/" # this one has 20 classes
 )
-
 
 parser.add_argument(
     '--use_wandb', 
@@ -155,18 +141,25 @@ def main():
 
     if args.do_kfold:
         # train here has to include everything
-        dataset = get_dataset(config, args, train_image_path=f'{args.data_path}train/images/',
-                                            train_mask_path=f'{args.data_path}train/masks/',
-                                            )
+        if config['chunking']:
+            dataset = get_dynamic_tiled_dataset(config, args, train_path=f'{args.data_path}train/')
+        else:
+            dataset = get_full_image_dataset(config, args, train_image_path=f'{args.data_path}train/images/',
+                                                train_mask_path=f'{args.data_path}train/masks/',
+                                                )
         k_fold(args, config, dataset, accumulation_steps, NUM_EPOCHS_K_FOLD, device, pref, class_weights, k=NUM_K_FOLDS)
 
     else:
-        train_dataset, test_dataset = get_dataset(config, args, train_image_path=f'{args.data_path}train/images/',
-                                                                train_mask_path=f'{args.data_path}train/masks/',
-                                                                test_image_path=f'{args.data_path}test/images/',
-                                                                test_mask_path=f'{args.data_path}test/masks/'
-                                                                )
-    
+        if config['chunking']:
+            train_dataset, test_dataset = get_full_image_dataset(config, args, train_path=f'{args.data_path}train/',
+                                                                    test_path=f'{args.data_path}test/'
+                                                                    )
+        else:
+            train_dataset, test_dataset = get_full_image_dataset(config, args, train_image_path=f'{args.data_path}train/images/',
+                                                                    train_mask_path=f'{args.data_path}train/masks/',
+                                                                    test_image_path=f'{args.data_path}test/images/',
+                                                                    test_mask_path=f'{args.data_path}test/masks/'
+                                                                    )
         regular_train(args, config, train_dataset, test_dataset, accumulation_steps, FINETUNED_MODEL_NAME, NUM_EPOCHS, device, pref, class_weights)
 
 
@@ -203,7 +196,7 @@ def get_model_optimizer_scaler_scheduler(args, config, device):
 
 
 
-def get_dataset(cfg, args, train_image_path=None, 
+def get_full_image_dataset(cfg, args, train_image_path=None, 
                            train_mask_path=None,
                            test_image_path=None, 
                            test_mask_path=None,
@@ -237,6 +230,34 @@ def get_dataset(cfg, args, train_image_path=None,
 
     return train_dataset, test_dataset
 
+
+def get_dynamic_tiled_dataset(cfg=None, 
+                              args=None,
+                              train_path=None,
+                              test_path=None
+                              ):
+    
+    # TODO: move this into the config
+    mean = [0.485, 0.456, 0.406]
+    std = [0.229, 0.224, 0.225]
+    boundary_mask = True
+    revert = True
+    dilate = True
+    train_transforms, test_transforms = get_transformation(mean=mean, std=std)
+    patch_size = 1024
+    overlap = 0
+    kernel_size=20
+
+    print("Uses chunking")
+
+    train_ds = DynamicImagePatchesDataset(data_dir=train_path, transform=train_transforms, patch_size=patch_size, overlap=overlap, inference_mode=False, boundary_mask=boundary_mask, revert=revert, dilate=dilate, kernel_size=kernel_size)
+
+    if not test_path:
+        return train_ds
+
+    test_ds = DynamicImagePatchesDataset(data_dir=test_path, transform=test_transforms, patch_size=patch_size, overlap=overlap, inference_mode=False, boundary_mask=boundary_mask, revert=revert, dilate=dilate, kernel_size=kernel_size)
+
+    return train_ds, test_ds
 
 
 def regular_train(args, cfg, train_dataset, test_dataset, accumulation_steps, 
@@ -328,8 +349,6 @@ def k_fold(args, cfg, dataset, accumulation_steps, NUM_EPOCHS, device, pref, cla
     print('Average metrics across folds:', k_fold_metrics)
     torch.save(k_fold_metrics, 'snowpack/k_fold_metrics.pt')
 
-
-
 def get_class_weights(data_path, device):
     class_pixel_counts = Counter()
     masks_train = [f'{data_path}train/masks/{i}' for i in os.listdir(f'{data_path}train/masks/') if 'store' not in i]
@@ -353,8 +372,5 @@ def get_class_weights(data_path, device):
 
     return torch.tensor(list((normalized_weights.values()))).to(device).to(torch.float32)
 
-
-
-    
 if __name__ == "__main__":
     main()
