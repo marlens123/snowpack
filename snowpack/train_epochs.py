@@ -64,13 +64,14 @@ def multiclass_epoch(train_loader, predictor, accumulation_steps, epoch,
                 for cls, iou in enumerate(iou_per_class):
                     wandb.log({f"iou_class_{cls}": iou})
 
-        # Backward pass
-        loss = loss / accumulation_steps
+            # Backward pass
+            loss = loss / accumulation_steps
         scaler.scale(loss).backward()
 
         # Gradient accumulation logic
         if (batch_idx + 1) % accumulation_steps == 0 or (batch_idx + 1) == len(train_loader):
             # Gradient clipping (optional)
+            scaler.unscale_(optimizer)  
             torch.nn.utils.clip_grad_norm_(predictor.model.parameters(), max_norm=1.0)
 
             # Step optimizer and scaler
@@ -221,6 +222,7 @@ def binary_epoch(train_loader, predictor, accumulation_steps, epoch,
         scaler.scale(loss).backward()
 
         # Clip gradients
+        scaler.unscale_(optimizer)  
         torch.nn.utils.clip_grad_norm_(predictor.model.parameters(), max_norm=1.0)
 
         if epoch % accumulation_steps == 0:
