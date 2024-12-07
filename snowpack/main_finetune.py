@@ -144,7 +144,7 @@ def main():
         config['mask_type'] = 'layer'
         print(f'Currently doing multiclass with {args.n_classes} classes. Need to have data folder location match up too')
         
-    class_weights = get_class_weights(args.data_path) if args.multiclasclass_weights else None
+    class_weights = get_class_weights(args.data_path) if args.multiclass else None
     # TODO: NOTE: I multiplied the learning rate by 100, might want that/might not want that
     # also scheduler is now different and idk if that's good tbh (older/original version is commented out)
 
