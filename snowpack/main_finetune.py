@@ -16,11 +16,11 @@ import torch.utils.data.distributed
 # from .dataset.data_utils import load_tifs_resize_to_np, load_tifs_resize_to_np_retain_ratio
 # from .dataset.dataset import SnowDataset
 
-from dataset.data_utils import load_tifs_resize_to_np, load_tifs_resize_to_np_retain_ratio
-from dataset.dataset import SnowDataset
-from dataset.dynamic_tiled_dataset import DynamicImagePatchesDataset
-from train_epochs import *
-from dataset.augmentation import get_transformation
+from snowpack.dataset.data_utils import load_tifs_resize_to_np, load_tifs_resize_to_np_retain_ratio
+from snowpack.dataset.dataset import SnowDataset
+from snowpack.dataset.dynamic_tiled_dataset import DynamicImagePatchesDataset
+from snowpack.train_epochs import *
+from snowpack.dataset.augmentation import get_transformation
 
 from torch.utils.data import DataLoader
 
@@ -84,6 +84,8 @@ parser.add_argument('--n_classes', default=20, type=int)
 def main():
     args = parser.parse_args()
 
+    pref = args.path_to_config.split('/')[-1].split('.')[0]
+
     if args.use_wandb:
         wandb.login()
 
@@ -125,6 +127,7 @@ def main():
     FINETUNED_MODEL_NAME = "snowpack_sam2"
     NUM_K_FOLDS = 3 # should be higher with a bigger batch size
     # Very lazy config updates:
+    config['chunking'] = True
     config['learning_rate'] = config['learning_rate'] * 100
     if args.multiclass:
         config['mask_type'] = 'layer'
@@ -134,10 +137,7 @@ def main():
     # TODO: NOTE: I multiplied the learning rate by 100, might want that/might not want that
     # also scheduler is now different and idk if that's good tbh (older/original version is commented out)
 
-    pref = args.path_to_config.split('/')[-1].split('.')[0]
     accumulation_steps = 7
-
-
 
     if args.do_kfold:
         # train here has to include everything
@@ -151,7 +151,7 @@ def main():
 
     else:
         if config['chunking']:
-            train_dataset, test_dataset = get_full_image_dataset(config, args, train_path=f'{args.data_path}train/',
+            train_dataset, test_dataset = get_dynamic_tiled_dataset(config, args, train_path=f'{args.data_path}train/',
                                                                     test_path=f'{args.data_path}test/'
                                                                     )
         else:

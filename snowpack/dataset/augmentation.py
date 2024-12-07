@@ -2,6 +2,8 @@ import numpy as np
 import torch
 from torchvision.transforms import v2
 
+def create_boundary_mask(mask, revert=False, dilate=False, kernel_size=20):
+    pass
 
 def get_transformation(mean, std):
     """
@@ -42,7 +44,7 @@ def get_transformation(mean, std):
     return train_transform, test_transform
 
 
-def normalize_image(image: np.ndarray, expected_range: int = 255) -> np.ndarray:
+def scale(image: np.ndarray, expected_range: int = 1) -> np.ndarray:
     """
     Normalizes the pixel values of the given image to be between 0 and expected_range.
 

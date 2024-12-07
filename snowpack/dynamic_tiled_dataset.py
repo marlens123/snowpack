@@ -7,11 +7,23 @@ from PIL import Image
 from torch.utils.data import Dataset
 from torchvision.tv_tensors import Mask
 
-from snowpack.augmentation import normalize_image
+from snowpack.dataset.augmentation import scale, create_boundary_mask
 
 
 class DynamicImagePatchesDataset(Dataset):
-    def __init__(self, data_dir: str, patch_size: int, overlap: int = 0, inference_mode: bool = False, transform=None):
+    def __init__(
+            self, 
+            data_dir: str, 
+            patch_size: int, 
+            overlap: int = 0, 
+            inference_mode: bool = False, 
+            transform=None, 
+            num_points: int = 50, 
+            boundary_mask: bool = False,
+            revert: bool = False,
+            dilate: bool = False,
+            kernel_size: int = 20
+        ):
         """
         Args:
             image_dir (str): Path to the directory containing data (images and masks).
@@ -32,6 +44,11 @@ class DynamicImagePatchesDataset(Dataset):
         self.patch_size = patch_size
         self.overlap = overlap
         self.transform = transform
+        self.num_points = num_points
+        self.boundary_mask = boundary_mask
+        self.revert = revert
+        self.dilate = dilate
+        self.kernel_size = kernel_size
 
         # list all the images and masks in the dataset and normalize them
         self.image_paths = [
@@ -44,9 +61,9 @@ class DynamicImagePatchesDataset(Dataset):
                 image_path.replace(".tiff", "_mask.tiff").replace("/images/", "/masks/")
                 for image_path in self.image_paths
             ]
-        self.image_paths = self.normalize_and_save_image(self.image_paths)
+        self.image_paths = self.preprocess_and_save_image(self.image_paths)
         if not inference_mode:
-            self.mask_paths = self.normalize_and_save_image(self.mask_paths)
+            self.mask_paths = self.preprocess_and_save_image(self.mask_paths)
 
         if not inference_mode:
             assert len(self.image_paths) == len(self.mask_paths), "Number of images and masks must be the same."
@@ -58,6 +75,20 @@ class DynamicImagePatchesDataset(Dataset):
         self.image_patch_counts = self._compute_patch_counts()
         self.index_map = self._create_index_map()
 
+    @staticmethod
+    def get_points(binarized_mask, num_points=50):
+        points = []
+
+        # Get all coordinates inside the eroded mask and choose a random point
+        coords = np.argwhere(binarized_mask > 0)
+        if len(coords) > 0:
+            for _ in range(num_points):  # Select as many points as there are unique labels
+                yx = np.array(coords[np.random.randint(len(coords))])
+                points.append([yx[1], yx[0]])
+
+        points = np.array(points)
+        return points
+
     def _confirm_image_and_mask_alignment(self):
         """Confirm the size, i.e. wdith and height, of each image and mask are the same."""
         for image_path, mask_path in zip(self.image_paths, self.mask_paths):
@@ -68,18 +99,32 @@ class DynamicImagePatchesDataset(Dataset):
             ), f"Image and mask sizes must match, image: {image.size}, mask: {mask.size} for {image_path} and {mask_path}"
         print("All images and masks are aligned.")
 
-    def normalize_and_save_image(self, image_paths) -> List[str]:
-        normalized_image_paths = []
+    def preprocess_and_save_image(self, image_paths) -> List[str]:
+        preprocessed_image_paths = []
         for image_path in image_paths:
             image = Image.open(image_path)
             image = np.array(image)
-            image = normalize_image(image)
+            image = scale(image)
             image = Image.fromarray(image)
             image = image.convert("L")
             new_image_path = image_path.replace(".tiff", ".jpg")
-            normalized_image_paths.append(new_image_path)
+            preprocessed_image_paths.append(new_image_path)
             image.save(new_image_path)
-        return normalized_image_paths
+        return preprocessed_image_paths
+    
+    def preprocess_and_save_mask(self, mask_paths) -> List[str]:
+        preprocessed_mask_paths = []
+        for mask_path in mask_paths:
+            mask = Image.open(mask_path)
+            mask = np.array(mask)
+            if self.boundary_masks:
+                mask = create_boundary_mask(mask, revert=self.revert, dilate=self.dilate, kernel_size=self.kernel_size)
+            mask = Image.fromarray(mask)
+            mask = mask.convert("L")
+            new_mask_path = mask_path.replace(".tiff", ".jpg")
+            preprocessed_mask_paths.append(new_mask_path)
+            mask.save(new_mask_path)
+        return preprocessed_mask_paths
 
     def _compute_patch_counts(self):
         """Precompute the number of patches each image will generate."""
@@ -136,13 +181,19 @@ class DynamicImagePatchesDataset(Dataset):
         if not self.inference_mode:
             mask_patch = self.get_patch(self.mask_paths[image_and_mask_index], patch_index)
             mask_patch = Mask(mask_patch)
-
+            
         if self.transform is not None:
             if not self.inference_mode:
                 image_patch, mask_patch = self.transform(image_patch, mask_patch)
+                prompt = np.expand_dims(self.get_points(mask_patch, num_points=self.num_points), axis=1)
+                print("Image shape: " + str(image_patch.shape))
+                print("Mask shape: " + str(mask_patch.shape))
             else:
                 image_patch = self.transform(image_patch)
+                print("Image shape: " + str(image_patch.shape))
+
         if not self.inference_mode:
-            return image_patch, mask_patch
+            num_masks = self.num_points
+            return image_patch, mask_patch, prompt, num_masks
         else:
             return image_patch
