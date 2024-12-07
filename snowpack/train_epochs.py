@@ -116,10 +116,12 @@ def validate_multiclass(val_loader, predictor, epoch, device, args):
             prd_masks = predictor._transforms.postprocess_masks(low_res_masks, predictor._orig_hw[-1])
 
             # Prepare ground truth mask
-            gt_mask = torch.tensor(mask, dtype=torch.long).to(device)
+            gt_mask = torch.tensor(mask, dtype=torch.long).to(device) - 1
+            
 
             # IoU computation
             pred_labels = torch.argmax(prd_masks, dim=1)  # Shape: [batch_size, H, W]
+
             iou_per_class = []
             for cls in range(prd_masks.shape[1]):  # Loop over classes
                 inter = ((pred_labels == cls) & (gt_mask == cls)).sum()
@@ -273,6 +275,7 @@ def validate_binary(val_loader, predictor, epoch, device, args):
 
             if epoch == 1:
                 val_mean_iou = 0
+
 
             val_mean_iou = val_mean_iou * 0.99 + 0.01 * np.mean(val_iou.cpu().detach().numpy())
             epoch_mean_iou.append(val_mean_iou)
