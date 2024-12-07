@@ -225,19 +225,13 @@ def get_dataset(cfg, args, train_image_path=None,
         return train_dataset
 
     if cfg['resize_method'] == "resize_retain_aspect":
-        if args.multiclass:
-            test_images, test_masks = load_tifs_resize_to_np_retain_ratio(test_image_path, test_mask_path, mask_type=cfg['mask_type'])
-        else:
-            test_images, test_masks = load_tifs_resize_to_np_retain_ratio(test_image_path, test_mask_path)
+        test_images, test_masks = load_tifs_resize_to_np_retain_ratio(test_image_path, test_mask_path)
     elif cfg['resize_method'] == "resize_simple":
-        if args.multiclass:
-            test_images, test_masks = load_tifs_resize_to_np(test_image_path, test_mask_path, mask_type=cfg['mask_type'])
-        else:
-            test_images, test_masks = load_tifs_resize_to_np(test_image_path, test_mask_path)
+        test_images, test_masks = load_tifs_resize_to_np(test_image_path, test_mask_path)
     else:
         raise NotImplementedError
     # dataset setup
-    test_dataset = SnowDataset(test_images, test_masks, transforms=test_transforms, dilate=cfg['dilate'])
+    test_dataset = SnowDataset(test_images, test_masks, transforms=test_transforms, dilate=cfg['dilate'], mask_type=cfg['mask_type'])
 
     return train_dataset, test_dataset
 
