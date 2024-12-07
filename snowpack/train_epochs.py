@@ -211,6 +211,13 @@ def binary_epoch(train_loader, predictor, accumulation_steps, epoch,
 
             # Apply gradient accumulation
             loss = loss / accumulation_steps
+
+        for param in predictor.model.parameters():
+            if param.grad is not None:
+                if torch.any(torch.isnan(param.grad)) or torch.any(torch.isinf(param.grad)):
+                    print(f"Invalid gradient detected for parameter {param}")
+                    break
+
         scaler.scale(loss).backward()
 
         # Clip gradients
