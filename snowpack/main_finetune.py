@@ -241,7 +241,7 @@ def get_dataset(cfg, args, train_image_path=None,
 
 def regular_train(args, cfg, train_dataset, test_dataset, accumulation_steps, 
                   FINETUNED_MODEL_NAME, NUM_EPOCHS, device, pref, class_weights,
-                  num_workers=1):
+                  num_workers=1, first_class_is_1=True):
 
     train_loader = DataLoader(
     train_dataset,
@@ -263,8 +263,8 @@ def regular_train(args, cfg, train_dataset, test_dataset, accumulation_steps,
         with torch.amp.autocast(device.type):
             if args.multiclass:
                 mean_train_iou, loss = multiclass_epoch(train_loader, predictor, accumulation_steps, epoch, 
-                    scheduler, scaler, optimizer, device, class_weights, args, first_class_is_1=True)
-                mean_test_iou = validate_multiclass(val_loader, predictor, epoch, device, args, first_class_is_1=True)
+                    scheduler, scaler, optimizer, device, class_weights, args, first_class_is_1)
+                mean_test_iou = validate_multiclass(val_loader, predictor, epoch, device, args, first_class_is_1)
 
             else:
                 mean_train_iou, loss = binary_epoch(train_loader, predictor, accumulation_steps, epoch, 
@@ -277,7 +277,7 @@ def regular_train(args, cfg, train_dataset, test_dataset, accumulation_steps,
 
 
 
-def k_fold(args, cfg, dataset, accumulation_steps, NUM_EPOCHS, device, pref, class_weights, k, num_workers=4):
+def k_fold(args, cfg, dataset, accumulation_steps, NUM_EPOCHS, device, pref, class_weights, k, num_workers=1, first_class_is_1=True):
     
     kfold = KFold(n_splits=k, shuffle=True, random_state=args.seed)
     
@@ -303,8 +303,8 @@ def k_fold(args, cfg, dataset, accumulation_steps, NUM_EPOCHS, device, pref, cla
             with torch.amp.autocast(device.type):
                 if args.multiclass:
                     mean_train_iou, loss = multiclass_epoch(train_loader, predictor, accumulation_steps, epoch, 
-                                                      scheduler, scaler, optimizer, device, class_weights, args, first_class_is_1=True)
-                    mean_val_iou = validate_multiclass(val_loader, predictor, epoch, device, args, first_class_is_1=True)
+                                                      scheduler, scaler, optimizer, device, class_weights, args, first_class_is_1)
+                    mean_val_iou = validate_multiclass(val_loader, predictor, epoch, device, args, first_class_is_1)
 
                 else:
                     mean_train_iou, loss = binary_epoch(train_loader, predictor, accumulation_steps, epoch, 
