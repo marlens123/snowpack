@@ -237,9 +237,9 @@ class SnowDataset(BaseDataset):
         # TODO: does the prompt have to be in float?
 
         if self.mask_type == 'layer':
-            return image.astype(np.float32), mask.astype(np.float32)
+            return image.astype(np.float16), mask.astype(np.float16)
         else:
-            return image.astype(np.float32), mask.astype(np.float32), prompt, num_masks
+            return image.astype(np.float16), mask.astype(np.float16), prompt, num_masks
     
     # NEXT: check transforms - is interpolation nearest, check that resizing retains aspect ratio
     # check if grayscale function in the transforms works or if we should rather do it here

@@ -2,8 +2,11 @@ import numpy as np
 import torch
 from torchvision.transforms import v2
 
-def create_boundary_mask(mask, revert=False, dilate=False, kernel_size=20):
-    pass
+class Transpose(torch.nn.Module):
+    def forward(self, image, mask):
+        assert image.ndim == 3 and image.shape[0] == 3
+        print("Image is in the rigth shape!")
+        return image.permute(1, 2, 0), mask.permute(1, 2, 0)
 
 def get_transformation(mean, std):
     """
@@ -28,6 +31,7 @@ def get_transformation(mean, std):
             v2.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1),
             v2.RandomRotation(degrees=15, interpolation=v2.InterpolationMode.NEAREST),  # type: ignore
             v2.Normalize(mean=mean, std=std),
+            Transpose()
         ]
     )
 
@@ -38,6 +42,7 @@ def get_transformation(mean, std):
             v2.Grayscale(3),
             v2.Resize((1024, 1024)),
             v2.Normalize(mean=mean, std=std),
+            Transpose()
         ]
     )
 
@@ -68,3 +73,24 @@ def revert_normalization(image: torch.Tensor, mean, std):
     std = torch.tensor(std).view(-1, 1, 1)
     reverted_image = image * std + mean
     return reverted_image
+
+
+def create_boundary_mask(mask, revert: bool = False, dilate: bool = False, kernel_size: int = 20):
+    mask = mask.numpy()
+    sobel_x = cv2.Sobel(mask, cv2.CV_64F, 1, 0, ksize=3)
+    sobel_y = cv2.Sobel(mask, cv2.CV_64F, 0, 1, ksize=3)
+    magnitude = np.sqrt(sobel_x**2 + sobel_y**2)
+    _, boundary_mask = cv2.threshold(magnitude, 1, 255, cv2.THRESH_BINARY)
+
+    # Convert to 0s and 1s
+    binary_boundary = (boundary_mask > 0).astype(np.uint8)
+
+    kernel = np.ones((kernel_size, kernel_size), np.uint8)
+
+    if dilate:
+        binary_boundary = cv2.dilate(binary_boundary, kernel, iterations=1)
+    if revert:
+        binary_boundary = 1 - binary_boundary
+
+    assert np.unique(binary_boundary).tolist() == [0, 1]
+    return binary_boundary

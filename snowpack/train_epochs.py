@@ -14,6 +14,8 @@ import wandb
 
 def multiclass_epoch(train_loader, predictor, accumulation_steps, epoch, 
                      scheduler, scaler, optimizer, device, class_weights, args, first_class_is_1):
+
+    predictor
     epoch_mean_iou, loss_mean_iou = [], []
     ######## lol
     sparse_embeddings = torch.zeros((1, 1, 256), device=predictor.model.device)
@@ -36,7 +38,7 @@ def multiclass_epoch(train_loader, predictor, accumulation_steps, epoch,
 
         low_res_masks = predictor.model(sparse_embeddings, dense_embeddings, high_res_features,
                                         predictor._features["image_embed"][-1].unsqueeze(0))
-        prd_masks = predictor._transforms.postprocess_masks(low_res_masks, predictor._orig_hw[-1])
+        prd_masks = predictor._transforms.postprocess_masks(low_res_masks, predictor._orig_hw[-1]).to(device)
 
 
         gt_mask = torch.tensor(mask, dtype=torch.long).to(device) 
@@ -317,7 +319,7 @@ class MulticlassSAMWrapper(nn.Module):
             nn.ReLU(),
             nn.Dropout(0.3),
             nn.Conv2d(in_channels=64, out_channels=n_classes, kernel_size=1)
-        )
+        ).half()
 
         # self.multiclass_head = nn.Sequential(
         #     nn.Conv2d(in_channels=1, out_channels=64, kernel_size=3, padding=1),  # Intermediate channels

@@ -11,5 +11,5 @@ poetry install
 
 export WANDB_API_KEY=d2ca547c9f807e8db70308537f4d7b64b6077b81
 
-python -m snowpack.main_finetune --path_to_config "configs/revert_boundary_resize_simple.json"
-python -m snowpack.main_inference --path_to_config "configs/revert_boundary_resize_simple.json"
+python -m snowpack.main_finetune --path_to_config "configs/boundary_resize_simple.json" --multiclass
+#python -m snowpack.main_inference --path_to_config "configs/boundary_resize_simple.json"

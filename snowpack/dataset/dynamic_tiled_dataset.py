@@ -58,7 +58,7 @@ class DynamicImagePatchesDataset(Dataset):
         # there is an allignmnet between the images and the masks i.e. the mask of the first image is the first mask
         if not inference_mode:
             self.mask_paths = [
-                image_path.replace(".tiff", "_mask.tiff").replace("/images/", "/masks/")
+                image_path.replace("/images/", "/masks/")
                 for image_path in self.image_paths
             ]
         self.image_paths = self.preprocess_and_save_image(self.image_paths)
@@ -104,7 +104,7 @@ class DynamicImagePatchesDataset(Dataset):
         for image_path in image_paths:
             image = Image.open(image_path)
             image = np.array(image)
-            image = scale(image)
+            #image = scale(image)
             image = Image.fromarray(image)
             image = image.convert("L")
             new_image_path = image_path.replace(".tiff", ".jpg")
@@ -193,12 +193,12 @@ class DynamicImagePatchesDataset(Dataset):
             
         if self.transform is not None:
             if not self.inference_mode:
+                print("Transforming")
                 image_patch, mask_patch = self.transform(image_patch, mask_patch)
-                print("Image shape: " + str(image_patch.shape))
-                print("Mask shape: " + str(mask_patch.shape))
+                # masks must be in shape (1, H, W) for replacing the batch size
+                mask_patch = mask_patch.permute(2, 0, 1)
             else:
                 image_patch = self.transform(image_patch)
-                print("Image shape: " + str(image_patch.shape))
         else:
             image_patch = self.expand_grayscale_channel(np.array(image_patch)).astype(np.float32)
             if not self.inference_mode:
@@ -210,6 +210,8 @@ class DynamicImagePatchesDataset(Dataset):
             num_masks = self.num_points
             return image_patch, mask_patch, prompt, num_masks
         elif not self.inference_mode:
-            return image_patch, mask_patch
+            print("Image shape: " + str(image_patch.shape))
+            print("Mask shape: " + str(mask_patch.shape))
+            return np.array(image_patch).astype(np.float32), np.array(mask_patch).astype(np.float32)
         else:
             return image_patch

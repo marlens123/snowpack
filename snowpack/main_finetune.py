@@ -169,16 +169,19 @@ def get_model_optimizer_scaler_scheduler(args, config, device):
     sam2_checkpoint = "snowpack/model/model_checkpoints/sam2.1_hiera_small.pt"
     #with resources.open_text('snowpack', ) as file:
     model_cfg = 'configs/sam2.1/sam2.1_hiera_s.yaml'
-    sam2_model = build_sam2(config_file=model_cfg, ckpt_path=sam2_checkpoint, device=device)
+    sam2_model = build_sam2(config_file=model_cfg, ckpt_path=sam2_checkpoint, device="cuda")
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
     if args.multiclass:
-        sam2_model = MulticlassSAMWrapper(sam2_model, args.n_classes) 
+        sam2_model = MulticlassSAMWrapper(sam2_model, args.n_classes).to(device)
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
     predictor = SAM2ImagePredictor(sam2_model)
 
     # make prompt encoder and mask decoder trainable
     predictor.model.sam_mask_decoder.train(True)
     predictor.model.sam_prompt_encoder.train(True)
+
+    predictor.model.sam_mask_decoder = predictor.model.sam_mask_decoder.to(torch.float16)
+    predictor.model.sam_prompt_encoder = predictor.model.sam_prompt_encoder.to(torch.float16)
 
     # training setup
     optimizer=torch.optim.AdamW(params=predictor.model.parameters(),lr=config['learning_rate'],weight_decay=1e-4) #1e-5, weight_decay = 4e-5
@@ -237,13 +240,14 @@ def get_dynamic_tiled_dataset(cfg=None,
                               test_path=None
                               ):
     
-    # TODO: move this into the config
+    # TODO: messy here, move this into the config
     mean = [0.485, 0.456, 0.406]
     std = [0.229, 0.224, 0.225]
-    boundary_mask = True
+    boundary_mask = False
     revert = True
     dilate = True
     train_transforms, test_transforms = get_transformation(mean=mean, std=std)
+    #train_transforms, test_transforms = None, None
     patch_size = 1024
     overlap = 0
     kernel_size=20
@@ -351,8 +355,8 @@ def k_fold(args, cfg, dataset, accumulation_steps, NUM_EPOCHS, device, pref, cla
 
 def get_class_weights(data_path, device):
     class_pixel_counts = Counter()
-    masks_train = [f'{data_path}train/masks/{i}' for i in os.listdir(f'{data_path}train/masks/') if 'store' not in i]
-    masks_test = [f'{data_path}test/masks/{i}' for i in os.listdir(f'{data_path}test/masks/') if 'store' not in i]
+    masks_train = [f'{data_path}train/masks/{i}' for i in os.listdir(f'{data_path}train/masks/') if 'store' not in i and i.endswith('.tiff')]
+    masks_test = [f'{data_path}test/masks/{i}' for i in os.listdir(f'{data_path}test/masks/') if 'store' not in i and i.endswith('.tiff')]
     masks_train.extend(masks_test)
     masks_paths = masks_train
 

@@ -34,6 +34,7 @@ opencv-python = "^4.10.0.84"
 patchify = "^0.2.3"
 wandb = "^0.18.7"
 matplotlib = "^3.9.3"
+scikit-learn = "^1.5.2"
 
 [tool.poetry.group.dev.dependencies]
 # Optional dependencies that need to be installed with poetry
