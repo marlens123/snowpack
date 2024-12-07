@@ -184,3 +184,4 @@ poetry
 !weights_20_2.pt
 *.DS_Store
 */sam2
+data_dir/*

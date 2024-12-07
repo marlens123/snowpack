@@ -2,7 +2,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
 
-from snowpack.augmentation import get_transformation, revert_normalization
+from snowpack.augmentation import (
+    get_transformation,
+    normalize_image,
+    revert_normalization,
+)
 
 # Global variable for image path
 IMAGE_PATH = "assets/01_processed_20240108_16-29.tiff"  # Update this path
@@ -16,7 +20,9 @@ def show_images_grid(image_path, train_transform, test_transform, save_file_name
     # Transform the image and revert normalization to be able to plot it
     # The prmute call is there to change the order of the dimensions from (C, H, W) to (H, W, C)
     transformed_images = [
-        revert_normalization(train_transform(image), mean=TRAIN_MEAN, std=TRAIN_STD).permute(1, 2, 0)
+        revert_normalization(
+            train_transform(normalize_image(image, expected_range=1)), mean=TRAIN_MEAN, std=TRAIN_STD
+        ).permute(1, 2, 0)
         for _ in range(num_images)
     ]
     _, axd = plt.subplot_mosaic(
@@ -37,7 +43,11 @@ def show_images_grid(image_path, train_transform, test_transform, save_file_name
             ax.imshow(original_image, cmap="gray")
         elif label == "2":
             ax.set_title("Test Transform")
-            ax.imshow(revert_normalization(test_transform(image), mean=TRAIN_MEAN, std=TRAIN_STD).permute(1, 2, 0))
+            ax.imshow(
+                revert_normalization(
+                    test_transform(normalize_image(image, expected_range=1)), mean=TRAIN_MEAN, std=TRAIN_STD
+                ).permute(1, 2, 0)
+            )
         else:
             ax.set_title("Train Transform")
             ax.imshow(transformed_images[i - 2])

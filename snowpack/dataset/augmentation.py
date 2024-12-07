@@ -16,7 +16,6 @@ def get_transformation(mean, std):
     """
     train_transform = v2.Compose(
         [
-            normalize_image,
             v2.ToImage(),
             v2.ToDtype(torch.float32, scale=True),
             v2.Grayscale(3),  # Convert to 3-channel grayscale image
@@ -32,7 +31,6 @@ def get_transformation(mean, std):
 
     test_transform = v2.Compose(
         [
-            normalize_image,
             v2.ToImage(),
             v2.ToDtype(torch.float32, scale=True),
             v2.Grayscale(3),
@@ -44,20 +42,18 @@ def get_transformation(mean, std):
     return train_transform, test_transform
 
 
-def normalize_image(image: np.ndarray, mask: np.ndarray) -> np.ndarray:
+def normalize_image(image: np.ndarray, expected_range: int = 255) -> np.ndarray:
     """
-    Normalizes the pixel values of the given image to be between 0 and 1.
+    Normalizes the pixel values of the given image to be between 0 and expected_range.
 
     Args:
         image (np.ndarray): The input image to normalize.
 
     Returns:
-        np.ndarray: The normalized image with pixel values between 0 and 1.
+        np.ndarray: The normalized image with pixel values between 0 and expected_range.
     """
-    min_val = image.min(axis=(0, 1), keepdims=True)
-    max_val = image.max(axis=(0, 1), keepdims=True)
-    normalized_image = (image - min_val) / (max_val - min_val)
-    return normalized_image, mask
+    normalized_image = (image - np.min(image)) / (np.max(image) - np.min(image)) * expected_range
+    return normalized_image
 
 
 def revert_normalization(image: torch.Tensor, mean, std):
