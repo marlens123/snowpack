@@ -34,7 +34,7 @@ def get_transformation(mean: List, std: List):
             v2.RandomRotation(degrees=15, interpolation=v2.InterpolationMode.NEAREST),  # type: ignore
             Transpose(),
             #v2.ToTensor(),
-            v2.Normalize(mean=mean, std=std)
+            #v2.Normalize(mean=mean, std=std)
         ]
     
     test_transform_list = [
@@ -44,7 +44,7 @@ def get_transformation(mean: List, std: List):
             v2.Resize((1024, 1024)),
             Transpose(),
             #v2.ToTensor(),
-            v2.Normalize(mean=mean, std=std)
+            #v2.Normalize(mean=mean, std=std)
         ]
 
     train_transform = v2.Compose(train_transform_list)

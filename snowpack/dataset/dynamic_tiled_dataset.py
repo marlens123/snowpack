@@ -173,6 +173,15 @@ class DynamicImagePatchesDataset(Dataset):
 
         patch = image.crop((left, top, right, bottom))
         return patch
+    
+    def expand_grayscale_channel(self, image):
+        # From (H, W) to (H, W, 3) to match the shape of the data the model was pre-trained on
+        image = np.expand_dims(image, -1)
+        image = image.repeat(3, axis=-1)
+
+        assert image[0].all() == image[1].all() == image[2].all()
+
+        return image
 
     def __getitem__(self, idx):
         # image_and_mask_index is the index of the image and mask in the dataset (same index for both)
@@ -185,15 +194,22 @@ class DynamicImagePatchesDataset(Dataset):
         if self.transform is not None:
             if not self.inference_mode:
                 image_patch, mask_patch = self.transform(image_patch, mask_patch)
-                prompt = np.expand_dims(self.get_points(mask_patch, num_points=self.num_points), axis=1)
                 print("Image shape: " + str(image_patch.shape))
                 print("Mask shape: " + str(mask_patch.shape))
             else:
                 image_patch = self.transform(image_patch)
                 print("Image shape: " + str(image_patch.shape))
+        else:
+            image_patch = self.expand_grayscale_channel(np.array(image_patch)).astype(np.float32)
+            if not self.inference_mode:
+                assert np.array(mask_patch.ndim == 3)
+                mask_patch = np.expand_dims(np.array(mask_patch), axis=0).astype(np.float32)
 
-        if not self.inference_mode:
+        if self.boundary_mask and not self.inference_mode:
+            prompt = np.expand_dims(self.get_points(mask_patch, num_points=self.num_points), axis=1)
             num_masks = self.num_points
             return image_patch, mask_patch, prompt, num_masks
+        elif not self.inference_mode:
+            return image_patch, mask_patch
         else:
             return image_patch

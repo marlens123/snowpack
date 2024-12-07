@@ -97,17 +97,18 @@ def main():
     # from: https://github.com/facebookresearch/sam2/blob/main/sam2/configs/sam2.1_training/sam2.1_hiera_b%2B_MOSE_finetune.yaml
     mean = [0.485, 0.456, 0.406]
     std = [0.229, 0.224, 0.225]
-    boundary_mask = True
-    revert = True
-    dilate = True
-    train_transforms, test_transforms = get_transformation(mean=mean, std=std)
+    boundary_mask = False
+    revert = False
+    dilate = False
+    #train_transforms, test_transforms = get_transformation(mean=mean, std=std)
+    train_transform, test_transform = None, None
     patch_size = 1024
     overlap = 0
     kernel_size=20
 
     # dataset setup
-    train_ds = DynamicImagePatchesDataset(data_dir=args.train_path, transform=train_transforms, patch_size=patch_size, overlap=overlap, inference_mode=False, boundary_mask=boundary_mask, revert=revert, dilate=dilate, kernel_size=kernel_size)
-    test_ds = DynamicImagePatchesDataset(data_dir=args.test_path, transform=test_transforms, patch_size=patch_size, overlap=overlap, inference_mode=False, boundary_mask=boundary_mask, revert=revert, dilate=dilate, kernel_size=kernel_size)
+    train_ds = DynamicImagePatchesDataset(data_dir=args.train_path, transform=train_transform, patch_size=patch_size, overlap=overlap, inference_mode=False, boundary_mask=boundary_mask, revert=revert, dilate=dilate, kernel_size=kernel_size)
+    test_ds = DynamicImagePatchesDataset(data_dir=args.test_path, transform=test_transform, patch_size=patch_size, overlap=overlap, inference_mode=False, boundary_mask=boundary_mask, revert=revert, dilate=dilate, kernel_size=kernel_size)
 
     main_worker(args, train_dataset=train_ds, test_dataset=test_ds, config=cfg)
 
