@@ -62,8 +62,8 @@ def multiclass_epoch(train_loader, predictor, accumulation_steps, epoch,
                 for cls, iou in enumerate(iou_per_class):
                     wandb.log({f"iou_class_{cls}": iou})
 
-        # Backward pass
-        loss = loss / accumulation_steps
+            # Backward pass
+            loss = loss / accumulation_steps
         scaler.scale(loss).backward()
 
         # Gradient accumulation logic
