@@ -338,10 +338,8 @@ def get_class_weights(data_path):
     masks_paths = masks_train
 
     for mask_path in masks_paths:
-        mask = cv2.imread(mask_path, cv2.IMREAD_UNCHANGED)
-            
+        mask = cv2.imread(mask_path, cv2.IMREAD_UNCHANGED)        
         unique, counts = np.unique(mask, return_counts=True)
-        print(unique)
         class_pixel_counts.update(dict(zip(unique, counts)))
 
     total_pixels = sum(class_pixel_counts.values())
