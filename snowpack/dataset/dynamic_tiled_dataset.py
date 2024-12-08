@@ -54,16 +54,20 @@ class DynamicImagePatchesDataset(Dataset):
         self.image_paths = [
             os.path.join(self.image_dir, img) for img in os.listdir(self.image_dir) if img.endswith(".tiff")
         ]
+        #self.mask_paths = [
+        #    os.path.join(self.mask_dir, img) for img in os.listdir(self.mask_dir) if img.endswith(".tiff")
+        #]
         # build the mask paths based on the name of the file existing in the self.image_paths so that we make sure
         # there is an allignmnet between the images and the masks i.e. the mask of the first image is the first mask
+        
         if not inference_mode:
             self.mask_paths = [
                 image_path.replace("/images/", "/masks/")
                 for image_path in self.image_paths
             ]
-        self.image_paths = self.preprocess_and_save_image(self.image_paths)
-        if not inference_mode:
-            self.mask_paths = self.preprocess_and_save_mask(self.mask_paths)
+        #self.image_paths = self.preprocess_and_save_image(self.image_paths)
+        #if not inference_mode:
+        #    self.mask_paths = self.preprocess_and_save_mask(self.mask_paths)
 
         if not inference_mode:
             assert len(self.image_paths) == len(self.mask_paths), "Number of images and masks must be the same."
@@ -190,15 +194,15 @@ class DynamicImagePatchesDataset(Dataset):
         image_patch = self.get_patch(self.image_paths[image_and_mask_index], patch_index)
         if not self.inference_mode:
             mask_patch = self.get_patch(self.mask_paths[image_and_mask_index], patch_index)
-            print("Unique after patching: " + str(mask_patch))
+            print("Unique after patching: " + str(np.array(mask_patch)))
             mask_patch = Mask(mask_patch)
             
         if self.transform is not None:
             if not self.inference_mode:
                 print("Transforming")
-                print("Unique before transforming: " + str(mask_patch))
+                print("Unique before transforming: " + str(np.array(mask_patch)))
                 image_patch, mask_patch = self.transform(image_patch, mask_patch)
-                print("Unique after transforming: " + str(mask_patch))
+                print("Unique after transforming: " + str(np.array(mask_patch)))
                 # masks must be in shape (1, H, W) for replacing the batch size
                 mask_patch = mask_patch.permute(2, 0, 1)
             else:
