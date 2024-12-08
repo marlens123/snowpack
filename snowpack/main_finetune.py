@@ -287,15 +287,13 @@ def regular_train(args, cfg, train_dataset, test_dataset, accumulation_steps,
     for epoch in trange(1, NUM_EPOCHS + 1):
         if args.multiclass:
             mean_train_iou, loss = multiclass_epoch(train_loader, predictor, accumulation_steps, epoch, 
-                scheduler, scaler, optimizer, device, class_weights, args, first_class_is_1=False)
-            with torch.amp.autocast(device.type):
-                mean_test_iou = validate_multiclass(val_loader, predictor, epoch, device, args)
+                scheduler, scaler, optimizer, device, class_weights, args, first_class_is_1=True)
+            mean_test_iou = validate_multiclass(val_loader, predictor, epoch, device, args)
 
         else:
             mean_train_iou, loss = binary_epoch(train_loader, predictor, accumulation_steps, epoch, 
                 scheduler, scaler, optimizer, device, class_weights, args)
-            with torch.amp.autocast(device.type):
-                mean_test_iou = validate_binary(val_loader, predictor, epoch, device, args)
+            mean_test_iou = validate_binary(val_loader, predictor, epoch, device, args)
 
 
     FINETUNED_MODEL = FINETUNED_MODEL_NAME + "_" + str(pref) + "_" + str(epoch) + ".torch"
@@ -329,14 +327,12 @@ def k_fold(args, cfg, dataset, accumulation_steps, NUM_EPOCHS, device, pref, cla
             if args.multiclass:
                 mean_train_iou, loss = multiclass_epoch(train_loader, predictor, accumulation_steps, epoch, 
                                                     scheduler, scaler, optimizer, device, class_weights, args, first_class_is_1)
-                with torch.amp.autocast(device.type):
-                    mean_val_iou = validate_multiclass(val_loader, predictor, epoch, device, args, first_class_is_1)
+                mean_val_iou = validate_multiclass(val_loader, predictor, epoch, device, args, first_class_is_1)
 
             else:
                 mean_train_iou, loss = binary_epoch(train_loader, predictor, accumulation_steps, epoch, 
                                                     scheduler, scaler, optimizer, device, class_weights, args)
-                with torch.amp.autocast(device.type):
-                    mean_val_iou = validate_binary(val_loader, predictor, epoch, device, args)
+                mean_val_iou = validate_binary(val_loader, predictor, epoch, device, args)
         fold_metrics = {
             'final_train_iou': mean_train_iou,  # Replace with actual metrics from the training loop
             'final_val_iou': mean_val_iou,
