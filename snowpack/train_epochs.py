@@ -15,9 +15,11 @@ import wandb
 def multiclass_epoch(train_loader, predictor, accumulation_steps, epoch, 
                      scheduler, scaler, optimizer, device, class_weights, args, first_class_is_1):
 
-    predictor
+    for param in predictor.model.parameters(): param.data = param.data.half()
+
     epoch_mean_iou, loss_mean_iou = [], []
     ######## lol
+
     sparse_embeddings = torch.zeros((1, 1, 256), device=predictor.model.device)
     dense_prompt_embeddings = torch.zeros((1, 256, 256), device=predictor.model.device)
     dense_embeddings = F.interpolate(
@@ -26,11 +28,18 @@ def multiclass_epoch(train_loader, predictor, accumulation_steps, epoch,
         mode='bilinear',
         align_corners=False
     ).squeeze(0)  # Remove batch dimension if necessary
+
     #########
     for batch_idx, tup in enumerate(train_loader):
-        with torch.amp.autocast(device.type):
+        with torch.cuda.amp.autocast(enabled=False):
             image = np.array(tup[0].squeeze(0))
             mask = np.array(tup[1].squeeze(0))
+
+            predictor.model.float()
+
+            dtype = torch.float16 if torch.is_autocast_enabled() else torch.float32
+            sparse_embeddings = sparse_embeddings.to(dtype)
+            dense_embeddings = dense_embeddings.to(dtype)
 
             predictor.set_image(image)
 
@@ -39,16 +48,21 @@ def multiclass_epoch(train_loader, predictor, accumulation_steps, epoch,
 
             low_res_masks = predictor.model(sparse_embeddings, dense_embeddings, high_res_features,
                                             predictor._features["image_embed"][-1].unsqueeze(0))
-            prd_masks = predictor._transforms.postprocess_masks(low_res_masks, predictor._orig_hw[-1])
+            prd_masks = predictor._transforms.postprocess_masks(low_res_masks, predictor._orig_hw[-1]).float()
+            print(prd_masks.dtype)
+            if torch.is_autocast_enabled(): prd_masks = prd_masks.half()
 
-
-            gt_mask = torch.tensor(mask, dtype=torch.long).to(device) 
+            gt_mask = torch.tensor(mask, dtype=torch.long).to(prd_masks.device)
             if first_class_is_1:
-                gt_mask -= - 1 # since starting from 1 and not 0
+                gt_mask -= 1 # since starting from 1 and not 0
+
+            print(gt_mask.min(), gt_mask.max())
+            print(gt_mask.shape, prd_masks.shape)
 
             ## we might want to do class weighing
-            loss = F.cross_entropy(prd_masks, gt_mask, weight=class_weights.to(prd_masks.dtype))
-            
+            #loss = F.cross_entropy(prd_masks, gt_mask, weight=class_weights.to(prd_masks.dtype).to(prd_masks.device))
+            loss = F.cross_entropy(prd_masks, gt_mask)
+
             # IoU computation
             pred_labels = torch.argmax(prd_masks, dim=1)  # Shape: [batch_size, H, W]
 
@@ -64,17 +78,24 @@ def multiclass_epoch(train_loader, predictor, accumulation_steps, epoch,
                 for cls, iou in enumerate(iou_per_class):
                     wandb.log({f"iou_class_{cls}": iou})
 
-            # Backward pass
-            loss = loss / accumulation_steps
+        print("Sparse embeddings dtype:", sparse_embeddings.dtype)
+        print("Dense embeddings dtype:", dense_embeddings.dtype)
+        print("prd_masks dtype:", prd_masks.dtype)
+        print("gt_mask dtype:", gt_mask.dtype)
+        print("class_weights dtype:", class_weights.dtype)
+
+        loss = loss / accumulation_steps  # Scale the loss for accumulation
         scaler.scale(loss).backward()
 
         # Gradient accumulation logic
         if (batch_idx + 1) % accumulation_steps == 0 or (batch_idx + 1) == len(train_loader):
-            # Gradient clipping (optional)
-            scaler.unscale_(optimizer)  
+            # Clip gradients after scaling the gradients and before stepping the optimizer
             torch.nn.utils.clip_grad_norm_(predictor.model.parameters(), max_norm=1.0)
 
-            # Step optimizer and scaler
+            # Unscale gradients
+            #scaler.unscale_(optimizer)
+
+            # Step the optimizer
             scaler.step(optimizer)
             scaler.update()
 
@@ -158,7 +179,7 @@ def binary_epoch(train_loader, predictor, accumulation_steps, epoch,
                  scheduler, scaler, optimizer, device, class_weights=None, args=None):
     epoch_mean_iou, loss_mean_iou = [], []
     for _, tup in enumerate(train_loader):
-        with torch.amp.autocast(device.type):
+        with torch.cuda.amp.autocast():
             image = np.array(tup[0].squeeze(0))
             mask = np.array(tup[1].squeeze(0))
             input_prompt = np.array(tup[2].squeeze(0))
@@ -222,7 +243,7 @@ def binary_epoch(train_loader, predictor, accumulation_steps, epoch,
         scaler.scale(loss).backward()
 
         # Clip gradients
-        scaler.unscale_(optimizer)  
+        #scaler.unscale_(optimizer)  
         torch.nn.utils.clip_grad_norm_(predictor.model.parameters(), max_norm=1.0)
 
         if epoch % accumulation_steps == 0:
@@ -230,20 +251,15 @@ def binary_epoch(train_loader, predictor, accumulation_steps, epoch,
             scaler.update()
             predictor.model.zero_grad()
 
-        if epoch == 1:
-            mean_iou = 0
-
-        mean_iou = mean_iou * 0.99 + 0.01 * np.mean(iou.cpu().detach().numpy())
-        epoch_mean_iou.append(mean_iou)
+        epoch_mean_iou.append(iou.cpu())
         loss_mean_iou.append(loss.item())
 
-        print("Epoch " + str(epoch) + ":\t", "Train Accuracy (IoU) = ", mean_iou)
+        print("Epoch " + str(epoch) + ":\t", "Train Accuracy (IoU) = ", iou)
         if args.use_wandb:
-            wandb.log({"epoch": epoch, "train_loss": loss, "train_iou": mean_iou})
+            wandb.log({"epoch": epoch, "train_loss": loss, "train_iou": iou})
     # Update scheduler
     scheduler.step()
     return np.mean(epoch_mean_iou), np.mean(loss_mean_iou)
-
 
 
 def validate_binary(val_loader, predictor, epoch, device, args):
@@ -291,14 +307,9 @@ def validate_binary(val_loader, predictor, epoch, device, args):
             inter = (gt_mask * (prd_mask > 0.5)).sum(1).sum(1)
             val_iou = inter / (gt_mask.sum(1).sum(1) + (prd_mask > 0.5).sum(1).sum(1) - inter)
 
-            if epoch == 1:
-                val_mean_iou = 0
-
-
-            val_mean_iou = val_mean_iou * 0.99 + 0.01 * np.mean(val_iou.cpu().detach().numpy())
-            epoch_mean_iou.append(val_mean_iou)
+            epoch_mean_iou.append(val_iou)
             if args.use_wandb:
-                wandb.log({"epoch": epoch, "val_iou": val_mean_iou})
+                wandb.log({"epoch": epoch, "val_iou": val_iou})
     return np.mean(epoch_mean_iou)
 
 
@@ -330,7 +341,7 @@ class MulticlassSAMWrapper(nn.Module):
             nn.ReLU(),
             nn.Dropout(0.3),
             nn.Conv2d(in_channels=64, out_channels=n_classes, kernel_size=1)
-        ).half()
+        )
 
         # self.multiclass_head = nn.Sequential(
         #     nn.Conv2d(in_channels=1, out_channels=64, kernel_size=3, padding=1),  # Intermediate channels

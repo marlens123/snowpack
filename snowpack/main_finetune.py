@@ -287,9 +287,9 @@ def regular_train(args, cfg, train_dataset, test_dataset, accumulation_steps,
     for epoch in trange(1, NUM_EPOCHS + 1):
         if args.multiclass:
             mean_train_iou, loss = multiclass_epoch(train_loader, predictor, accumulation_steps, epoch, 
-                scheduler, scaler, optimizer, device, class_weights, args, first_class_is_1)
+                scheduler, scaler, optimizer, device, class_weights, args, first_class_is_1=False)
             with torch.amp.autocast(device.type):
-                mean_test_iou = validate_multiclass(val_loader, predictor, epoch, device, args, first_class_is_1)
+                mean_test_iou = validate_multiclass(val_loader, predictor, epoch, device, args)
 
         else:
             mean_train_iou, loss = binary_epoch(train_loader, predictor, accumulation_steps, epoch, 
