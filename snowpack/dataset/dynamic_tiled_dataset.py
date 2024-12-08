@@ -1,6 +1,7 @@
 import math
 import os
 from typing import List
+import torch
 
 import numpy as np
 from PIL import Image
@@ -18,6 +19,8 @@ class DynamicImagePatchesDataset(Dataset):
             overlap: int = 0, 
             inference_mode: bool = False, 
             transform=None, 
+            transform_images=None,
+            transform_masks_and_images=None,
             num_points: int = 50, 
             boundary_mask: bool = False,
             revert: bool = False,
@@ -44,6 +47,9 @@ class DynamicImagePatchesDataset(Dataset):
         self.patch_size = patch_size
         self.overlap = overlap
         self.transform = transform
+        if transform_images:
+            self.transform_images = transform_images
+            self.transform_masks_and_images = transform_masks_and_images
         self.num_points = num_points
         self.boundary_mask = boundary_mask
         self.revert = revert
@@ -54,24 +60,24 @@ class DynamicImagePatchesDataset(Dataset):
         self.image_paths = [
             os.path.join(self.image_dir, img) for img in os.listdir(self.image_dir) if img.endswith(".tiff")
         ]
-        #self.mask_paths = [
-        #    os.path.join(self.mask_dir, img) for img in os.listdir(self.mask_dir) if img.endswith(".tiff")
-        #]
+
+        self.mask_paths = [
+            os.path.join(self.mask_dir, img) for img in os.listdir(self.mask_dir) if img.endswith(".tiff")
+        ]
         # build the mask paths based on the name of the file existing in the self.image_paths so that we make sure
         # there is an allignmnet between the images and the masks i.e. the mask of the first image is the first mask
-        
-        if not inference_mode:
-            self.mask_paths = [
-                image_path.replace("/images/", "/masks/")
-                for image_path in self.image_paths
-            ]
-        #self.image_paths = self.preprocess_and_save_image(self.image_paths)
-        #if not inference_mode:
-        #    self.mask_paths = self.preprocess_and_save_mask(self.mask_paths)
+        # if not inference_mode:
+        #     self.mask_paths = [
+        #         image_path.replace("/images/", "/masks/")
+        #         for image_path in self.image_paths
+        #     ]
+        # self.image_paths = self.preprocess_and_save_image(self.image_paths)
+        # if not inference_mode:
+        #     self.mask_paths = self.preprocess_and_save_mask(self.mask_paths)
 
-        if not inference_mode:
-            assert len(self.image_paths) == len(self.mask_paths), "Number of images and masks must be the same."
-            self._confirm_image_and_mask_alignment()
+        # if not inference_mode:
+        #     assert len(self.image_paths) == len(self.mask_paths), "Number of images and masks must be the same."
+        #     self._confirm_image_and_mask_alignment()
 
         # compute the number of patches each image and mask will generate
 
@@ -125,7 +131,7 @@ class DynamicImagePatchesDataset(Dataset):
                 mask = create_boundary_mask(mask, revert=self.revert, dilate=self.dilate, kernel_size=self.kernel_size)
             mask = Image.fromarray(mask)
             mask = mask.convert("L")
-            print(f"Unique values before save: {np.unique(mask)}")
+            # print(f"Unique values before save: {np.unique(mask)}")
             new_mask_path = mask_path.replace(".tiff", ".jpg")
             preprocessed_mask_paths.append(new_mask_path)
             mask.save(new_mask_path)
@@ -194,15 +200,19 @@ class DynamicImagePatchesDataset(Dataset):
         image_patch = self.get_patch(self.image_paths[image_and_mask_index], patch_index)
         if not self.inference_mode:
             mask_patch = self.get_patch(self.mask_paths[image_and_mask_index], patch_index)
-            print("Unique after patching: " + str(np.array(mask_patch)))
+            # print("Unique after patching: " + str(mask_patch))
             mask_patch = Mask(mask_patch)
             
-        if self.transform is not None:
+        if self.transform is not None or self.transform_images is not None:
             if not self.inference_mode:
-                print("Transforming")
-                print("Unique before transforming: " + str(np.array(mask_patch)))
-                image_patch, mask_patch = self.transform(image_patch, mask_patch)
-                print("Unique after transforming: " + str(np.array(mask_patch)))
+                # print("Transforming")
+                # print("Unique before transforming: " + str(mask_patch))
+                if self.transform_images:
+                    image_patch, mask_patch = self.transform_masks_and_images(image_patch, mask_patch)
+                    image_patch = self.transform_images(image_patch)
+                else:
+                    image_patch, mask_patch = self.transform(image_patch, mask_patch)
+                # print("Unique after transforming: " + str(mask_patch))
                 # masks must be in shape (1, H, W) for replacing the batch size
                 mask_patch = mask_patch.permute(2, 0, 1)
             else:

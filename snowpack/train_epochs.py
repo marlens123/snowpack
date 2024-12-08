@@ -30,6 +30,7 @@ def multiclass_epoch(train_loader, predictor, accumulation_steps, epoch,
     ).squeeze(0)  # Remove batch dimension if necessary
 
     #########
+    a = 0
     for batch_idx, tup in enumerate(train_loader):
         image = np.array(tup[0].squeeze(0))
         mask = np.array(tup[1].squeeze(0))
@@ -51,24 +52,23 @@ def multiclass_epoch(train_loader, predictor, accumulation_steps, epoch,
 
         gt_mask = torch.tensor(mask, dtype=torch.long).to(prd_masks.device)
 
-        # hacky: masks need to be in range [0, num_classes -1]
-        if gt_mask.max() == 20:
-            print("Hi Hi")
-            gt_mask -= 1 # since starting from 1 and not 0
-
-        print("Unique values of gt: " + str(torch.unique(gt_mask)))
-        print(gt_mask.min(), gt_mask.max())
-        print(gt_mask.shape, prd_masks.shape)
-
         assert gt_mask.min() >= 0, "gt_mask contains negative indices"
-        assert gt_mask.max() < 20, "gt_mask contains out-of-range indices"
-
+        assert gt_mask.max() < 21, "gt_mask contains out-of-range indices"
         ## we might want to do class weighing
         #loss = F.cross_entropy(prd_masks, gt_mask, weight=class_weights.to(prd_masks.dtype).to(prd_masks.device))
         loss = F.cross_entropy(prd_masks, gt_mask)
 
         # IoU computation
         pred_labels = torch.argmax(prd_masks, dim=1)  # Shape: [batch_size, H, W]
+
+
+        torch.save(gt_mask, f'snowpack/patches/masks/{a}.pt')
+        torch.save(image, f'snowpack/patches/images/{a}.pt')
+        print(f'saving {a}')
+
+        a += 1
+        if a == 20:
+            exit()
 
         iou_per_class = []
         for cls in range(prd_masks.shape[1]):  # Loop over classes
@@ -81,12 +81,6 @@ def multiclass_epoch(train_loader, predictor, accumulation_steps, epoch,
         if args.use_wandb:
             for cls, iou in enumerate(iou_per_class):
                 wandb.log({f"iou_class_{cls}": iou})
-
-        print("Sparse embeddings dtype:", sparse_embeddings.dtype)
-        print("Dense embeddings dtype:", dense_embeddings.dtype)
-        print("prd_masks dtype:", prd_masks.dtype)
-        print("gt_mask dtype:", gt_mask.dtype)
-        print("class_weights dtype:", class_weights.dtype)
 
         loss = loss / accumulation_steps  # Scale the loss for accumulation
         loss.backward()
@@ -150,9 +144,7 @@ def validate_multiclass(val_loader, predictor, epoch, device, args, first_class_
 
             # Prepare ground truth mask
             gt_mask = torch.tensor(mask, dtype=torch.long).to(device)
-            if first_class_is_1:
-                gt_mask -= 1
-            
+
 
             # IoU computation
             pred_labels = torch.argmax(prd_masks, dim=1)  # Shape: [batch_size, H, W]
