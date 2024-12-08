@@ -1,9 +1,12 @@
 import numpy as np
 import torch
 from torchvision.transforms import v2
+import cv2
 
 class Transpose(torch.nn.Module):
-    def forward(self, image, mask):
+    def forward(self, image, mask=None):
+        if mask is None:
+            return image.permute(1,2,0)
         assert image.ndim == 3 and image.shape[0] == 3
         print("Image is in the rigth shape!")
         return image.permute(1, 2, 0), mask.permute(1, 2, 0)
@@ -19,7 +22,7 @@ def get_transformation(mean, std):
     Returns:
         tuple: (train_transform, test_transform)
     """
-    train_transform = v2.Compose(
+    train_transform_images = v2.Compose(
         [
             v2.ToImage(),
             v2.ToDtype(torch.float32, scale=True),
@@ -28,13 +31,29 @@ def get_transformation(mean, std):
             v2.RandomResizedCrop(size=1024, scale=(0.08, 1.0), ratio=(0.75, 1.33), interpolation=v2.InterpolationMode.NEAREST),
             v2.RandomHorizontalFlip(p=0.5),
             v2.RandomVerticalFlip(p=0.5),
-            v2.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1),
+            v2.ColorJitter(brightness=0.1, contrast=0.4, saturation=0.1, hue=0.1),
             v2.RandomRotation(degrees=15, interpolation=v2.InterpolationMode.NEAREST),  # type: ignore
             v2.Normalize(mean=mean, std=std),
             Transpose()
         ]
     )
 
+
+    train_transform_masks = v2.Compose(
+        [
+            v2.ToImage(),
+            v2.ToDtype(torch.float32, scale=True),
+            v2.Grayscale(3),  # Convert to 3-channel grayscale image
+            # Crop a random portion of image and resize it to a given size.
+            v2.RandomResizedCrop(size=1024, scale=(0.08, 1.0), ratio=(0.75, 1.33), interpolation=v2.InterpolationMode.NEAREST),
+            v2.RandomHorizontalFlip(p=0.5),
+            v2.RandomVerticalFlip(p=0.5),
+            # v2.ColorJitter(brightness=0.1, contrast=0.4, saturation=0.1, hue=0.1),
+            v2.RandomRotation(degrees=15, interpolation=v2.InterpolationMode.NEAREST),  # type: ignore
+            # v2.Normalize(mean=mean, std=std),
+            Transpose()
+        ]
+    )
     test_transform = v2.Compose(
         [
             v2.ToImage(),
@@ -46,7 +65,7 @@ def get_transformation(mean, std):
         ]
     )
 
-    return train_transform, test_transform
+    return train_transform_images, train_transform_masks, test_transform
 
 
 def scale(image: np.ndarray, expected_range: int = 1) -> np.ndarray:

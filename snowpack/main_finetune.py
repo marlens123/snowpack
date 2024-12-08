@@ -16,11 +16,11 @@ import torch.utils.data.distributed
 # from .dataset.data_utils import load_tifs_resize_to_np, load_tifs_resize_to_np_retain_ratio
 # from .dataset.dataset import SnowDataset
 
-from snowpack.dataset.data_utils import load_tifs_resize_to_np, load_tifs_resize_to_np_retain_ratio
-from snowpack.dataset.dataset import SnowDataset
-from snowpack.dataset.dynamic_tiled_dataset import DynamicImagePatchesDataset
-from snowpack.train_epochs import *
-from snowpack.dataset.augmentation import get_transformation
+from dataset.data_utils import load_tifs_resize_to_np, load_tifs_resize_to_np_retain_ratio
+from dataset.dataset import SnowDataset
+from dataset.dynamic_tiled_dataset import DynamicImagePatchesDataset
+from train_epochs import *
+from dataset.augmentation import get_transformation
 
 from torch.utils.data import DataLoader
 
@@ -49,7 +49,7 @@ parser.add_argument(
 parser.add_argument("--gpu", default=0, help="GPU id to use.")
 
 parser.add_argument(
-    "--data_path", type=str, default="snowpack/data/multiclass_10_2/" # this one has 20 classes
+    "--data_path", type=str, default="snowpack/data/multiclass_10_2_boundary_5_pixels/" # this one has 21 classes
 )
 
 parser.add_argument(
@@ -77,7 +77,7 @@ parser.add_argument(
     action='store_true', 
     help='do multiclass training'
 )
-parser.add_argument('--n_classes', default=20, type=int)
+parser.add_argument('--n_classes', default=21, type=int)
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
 
 
@@ -160,7 +160,7 @@ def main():
                                                                     test_image_path=f'{args.data_path}test/images/',
                                                                     test_mask_path=f'{args.data_path}test/masks/'
                                                                     )
-        regular_train(args, config, train_dataset, test_dataset, accumulation_steps, FINETUNED_MODEL_NAME, NUM_EPOCHS, device, pref, class_weights)
+        regular_train(args, config, train_dataset, test_dataset, accumulation_steps, FINETUNED_MODEL_NAME, NUM_EPOCHS, device, pref, class_weights, first_class_is_1=False)
 
 
 
@@ -169,7 +169,7 @@ def get_model_optimizer_scaler_scheduler(args, config, device):
     sam2_checkpoint = "snowpack/model/model_checkpoints/sam2.1_hiera_small.pt"
     #with resources.open_text('snowpack', ) as file:
     model_cfg = 'configs/sam2.1/sam2.1_hiera_s.yaml'
-    sam2_model = build_sam2(config_file=model_cfg, ckpt_path=sam2_checkpoint, device="cuda")
+    sam2_model = build_sam2(config_file=model_cfg, ckpt_path=sam2_checkpoint, device=device)
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
     if args.multiclass:
         sam2_model = MulticlassSAMWrapper(sam2_model, args.n_classes).to(device)
@@ -246,7 +246,7 @@ def get_dynamic_tiled_dataset(cfg=None,
     boundary_mask = False
     revert = True
     dilate = True
-    train_transforms, test_transforms = get_transformation(mean=mean, std=std)
+    train_transform_images, train_transform_masks, test_transforms = get_transformation(mean=mean, std=std)
     #train_transforms, test_transforms = None, None
     patch_size = 1024
     overlap = 0
@@ -254,7 +254,7 @@ def get_dynamic_tiled_dataset(cfg=None,
 
     print("Uses chunking")
 
-    train_ds = DynamicImagePatchesDataset(data_dir=train_path, transform=train_transforms, patch_size=patch_size, overlap=overlap, inference_mode=False, boundary_mask=boundary_mask, revert=revert, dilate=dilate, kernel_size=kernel_size)
+    train_ds = DynamicImagePatchesDataset(data_dir=train_path, transform_images=train_transform_images, transform_masks=train_transform_masks, patch_size=patch_size, overlap=overlap, inference_mode=False, boundary_mask=boundary_mask, revert=revert, dilate=dilate, kernel_size=kernel_size)
 
     if not test_path:
         return train_ds
@@ -288,7 +288,7 @@ def regular_train(args, cfg, train_dataset, test_dataset, accumulation_steps,
         if args.multiclass:
             mean_train_iou, loss = multiclass_epoch(train_loader, predictor, accumulation_steps, epoch, 
                 scheduler, scaler, optimizer, device, class_weights, args, first_class_is_1=True)
-            mean_test_iou = validate_multiclass(val_loader, predictor, epoch, device, args)
+            mean_test_iou = validate_multiclass(val_loader, predictor, epoch, device, args, first_class_is_1=True)
 
         else:
             mean_train_iou, loss = binary_epoch(train_loader, predictor, accumulation_steps, epoch, 

@@ -189,9 +189,6 @@ class SnowDataset(BaseDataset):
         image_column_patches = patchify(image_column, (target_image_size, target_image_size), step=1)
         mask_column_patches = patchify(mask_column, (target_image_size, target_image_size), step=1)
 
-        print(image_column_patches.shape)
-        print(mask_column_patches.shape)
-
         for j in range(image_column_patches.shape[0]):
             image_patch = image_column_patches[j, 0]
             mask_patch = mask_column_patches[j, 0]
