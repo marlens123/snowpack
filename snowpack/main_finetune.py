@@ -246,7 +246,7 @@ def get_dynamic_tiled_dataset(cfg=None,
     boundary_mask = False
     revert = True
     dilate = True
-    train_transform_images, train_transform_masks, test_transforms = get_transformation(mean=mean, std=std)
+    train_transform_images, train_transform_masks_and_images, test_transforms = get_transformation(mean=mean, std=std)
     #train_transforms, test_transforms = None, None
     patch_size = 1024
     overlap = 0
@@ -254,7 +254,7 @@ def get_dynamic_tiled_dataset(cfg=None,
 
     print("Uses chunking")
 
-    train_ds = DynamicImagePatchesDataset(data_dir=train_path, transform_images=train_transform_images, transform_masks=train_transform_masks, patch_size=patch_size, overlap=overlap, inference_mode=False, boundary_mask=boundary_mask, revert=revert, dilate=dilate, kernel_size=kernel_size)
+    train_ds = DynamicImagePatchesDataset(data_dir=train_path, transform_images=train_transform_images, transform_masks_and_images=train_transform_masks_and_images, patch_size=patch_size, overlap=overlap, inference_mode=False, boundary_mask=boundary_mask, revert=revert, dilate=dilate, kernel_size=kernel_size)
 
     if not test_path:
         return train_ds
