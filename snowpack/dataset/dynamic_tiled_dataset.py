@@ -63,7 +63,7 @@ class DynamicImagePatchesDataset(Dataset):
             ]
         self.image_paths = self.preprocess_and_save_image(self.image_paths)
         if not inference_mode:
-            self.mask_paths = self.preprocess_and_save_image(self.mask_paths)
+            self.mask_paths = self.preprocess_and_save_mask(self.mask_paths)
 
         if not inference_mode:
             assert len(self.image_paths) == len(self.mask_paths), "Number of images and masks must be the same."
@@ -117,10 +117,11 @@ class DynamicImagePatchesDataset(Dataset):
         for mask_path in mask_paths:
             mask = Image.open(mask_path)
             mask = np.array(mask)
-            if self.boundary_masks:
+            if self.boundary_mask:
                 mask = create_boundary_mask(mask, revert=self.revert, dilate=self.dilate, kernel_size=self.kernel_size)
             mask = Image.fromarray(mask)
             mask = mask.convert("L")
+            print(f"Unique values before save: {np.unique(mask)}")
             new_mask_path = mask_path.replace(".tiff", ".jpg")
             preprocessed_mask_paths.append(new_mask_path)
             mask.save(new_mask_path)
@@ -157,7 +158,7 @@ class DynamicImagePatchesDataset(Dataset):
 
     def get_patch(self, img_or_mask_path, patch_index):
         """Extract a patch from an image or a mask given its index."""
-        image = Image.open(img_or_mask_path)
+        image = Image.open(img_or_mask_path).convert('L')
         width, height = image.size
         step_size = self.patch_size - self.overlap
         count_x = math.ceil((width - self.overlap) / step_size)
@@ -189,20 +190,26 @@ class DynamicImagePatchesDataset(Dataset):
         image_patch = self.get_patch(self.image_paths[image_and_mask_index], patch_index)
         if not self.inference_mode:
             mask_patch = self.get_patch(self.mask_paths[image_and_mask_index], patch_index)
+            print("Unique after patching: " + str(mask_patch))
             mask_patch = Mask(mask_patch)
             
         if self.transform is not None:
             if not self.inference_mode:
                 print("Transforming")
+                print("Unique before transforming: " + str(mask_patch))
                 image_patch, mask_patch = self.transform(image_patch, mask_patch)
+                print("Unique after transforming: " + str(mask_patch))
                 # masks must be in shape (1, H, W) for replacing the batch size
                 mask_patch = mask_patch.permute(2, 0, 1)
             else:
                 image_patch = self.transform(image_patch)
         else:
+            import cv2
             image_patch = self.expand_grayscale_channel(np.array(image_patch)).astype(np.float32)
+            image_patch = cv2.resize(image_patch, (1024,1024))
             if not self.inference_mode:
-                assert np.array(mask_patch.ndim == 3)
+                mask_patch = np.array(mask_patch)
+                mask_patch = cv2.resize(mask_patch, (1024,1024), interpolation=cv2.INTER_NEAREST)
                 mask_patch = np.expand_dims(np.array(mask_patch), axis=0).astype(np.float32)
 
         if self.boundary_mask and not self.inference_mode:
@@ -210,8 +217,6 @@ class DynamicImagePatchesDataset(Dataset):
             num_masks = self.num_points
             return image_patch, mask_patch, prompt, num_masks
         elif not self.inference_mode:
-            print("Image shape: " + str(image_patch.shape))
-            print("Mask shape: " + str(mask_patch.shape))
             return np.array(image_patch).astype(np.float32), np.array(mask_patch).astype(np.float32)
         else:
             return image_patch
