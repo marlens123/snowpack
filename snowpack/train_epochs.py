@@ -43,16 +43,16 @@ def multiclass_epoch(train_loader, predictor, accumulation_steps, epoch,
                                             predictor._features["image_embed"][-1].unsqueeze(0))
             prd_masks = predictor._transforms.postprocess_masks(low_res_masks, predictor._orig_hw[-1])
 
-
             gt_mask = torch.tensor(mask, dtype=torch.long).to(device) 
             if first_class_is_1:
-                gt_mask -= - 1 # since starting from 1 and not 0
+                gt_mask -= 1 # since starting from 1 and not 0
 
             ## we might want to do class weighing
             loss = F.cross_entropy(prd_masks, gt_mask, weight=class_weights.to(prd_masks.dtype))
             
             # IoU computation
             pred_labels = torch.argmax(prd_masks, dim=1)  # Shape: [batch_size, H, W]
+            
 
             iou_per_class = []
             for cls in range(prd_masks.shape[1]):  # Loop over classes
@@ -133,7 +133,6 @@ def validate_multiclass(val_loader, predictor, epoch, device, args, first_class_
             if first_class_is_1:
                 gt_mask -= 1
             
-
             # IoU computation
             pred_labels = torch.argmax(prd_masks, dim=1)  # Shape: [batch_size, H, W]
 
