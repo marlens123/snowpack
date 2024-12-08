@@ -52,6 +52,7 @@ def multiclass_epoch(train_loader, predictor, accumulation_steps, epoch,
 
         gt_mask = torch.tensor(mask, dtype=torch.long).to(prd_masks.device)
 
+
         # # hacky: masks need to be in range [0, num_classes -1]
         # if gt_mask.max() == 20:
         #     print("Hi Hi")
@@ -159,9 +160,7 @@ def validate_multiclass(val_loader, predictor, epoch, device, args, first_class_
 
             # Prepare ground truth mask
             gt_mask = torch.tensor(mask, dtype=torch.long).to(device)
-            # if first_class_is_1:
-            #     gt_mask -= 1
-            
+
 
             # IoU computation
             pred_labels = torch.argmax(prd_masks, dim=1)  # Shape: [batch_size, H, W]

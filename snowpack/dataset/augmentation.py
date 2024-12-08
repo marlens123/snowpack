@@ -28,11 +28,12 @@ def get_transformation(mean, std):
             v2.ToDtype(torch.float32, scale=True),
             v2.Grayscale(3),  # Convert to 3-channel grayscale image
             # Crop a random portion of image and resize it to a given size.
-            v2.RandomResizedCrop(size=1024, scale=(0.08, 1.0), ratio=(0.75, 1.33), interpolation=v2.InterpolationMode.NEAREST),
+            
             v2.RandomHorizontalFlip(p=0.5),
             v2.RandomVerticalFlip(p=0.5),
             v2.ColorJitter(brightness=0.1, contrast=0.4, saturation=0.1, hue=0.1),
             v2.RandomRotation(degrees=15, interpolation=v2.InterpolationMode.NEAREST),  # type: ignore
+            v2.RandomResizedCrop(size=1024, scale=(0.08, 1.0), ratio=(0.75, 1.33), interpolation=v2.InterpolationMode.NEAREST),
             v2.Normalize(mean=mean, std=std),
             Transpose()
         ]
@@ -45,11 +46,11 @@ def get_transformation(mean, std):
             v2.ToDtype(torch.float32, scale=True),
             v2.Grayscale(3),  # Convert to 3-channel grayscale image
             # Crop a random portion of image and resize it to a given size.
-            v2.RandomResizedCrop(size=1024, scale=(0.08, 1.0), ratio=(0.75, 1.33), interpolation=v2.InterpolationMode.NEAREST),
             v2.RandomHorizontalFlip(p=0.5),
             v2.RandomVerticalFlip(p=0.5),
             # v2.ColorJitter(brightness=0.1, contrast=0.4, saturation=0.1, hue=0.1),
             v2.RandomRotation(degrees=15, interpolation=v2.InterpolationMode.NEAREST),  # type: ignore
+            v2.RandomResizedCrop(size=1024, scale=(0.08, 1.0), ratio=(0.75, 1.33), interpolation=v2.InterpolationMode.NEAREST),
             # v2.Normalize(mean=mean, std=std),
             Transpose()
         ]
