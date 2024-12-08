@@ -27,6 +27,10 @@ def multiclass_epoch(train_loader, predictor, accumulation_steps, epoch,
     #########
     for batch_idx, tup in enumerate(train_loader):
         with torch.amp.autocast(device.type):
+            dtype = torch.float16 if torch.is_autocast_enabled() else torch.float32
+            sparse_embeddings = sparse_embeddings.to(dtype)
+            dense_embeddings = dense_embeddings.to(dtype)
+
             image = np.array(tup[0].squeeze(0))
             mask = np.array(tup[1].squeeze(0))
 
@@ -100,6 +104,7 @@ def validate_multiclass(val_loader, predictor, epoch, device, args, first_class_
             predictor.set_image(image)
 
             # Generate embeddings (can be skipped for multiclass if prompts are not used)
+
             sparse_embeddings = torch.zeros((1, 1, 256), device=predictor.model.device)
             dense_prompt_embeddings = torch.zeros((1, 256, 256), device=predictor.model.device)
             dense_embeddings = F.interpolate(
@@ -108,6 +113,9 @@ def validate_multiclass(val_loader, predictor, epoch, device, args, first_class_
                 mode='bilinear',
                 align_corners=False
             ).squeeze(0)
+            dtype = torch.float16 if torch.is_autocast_enabled() else torch.float32
+            sparse_embeddings = sparse_embeddings.to(dtype)
+            dense_embeddings = dense_embeddings.to(dtype)
 
             # Obtain predictions
             batched_mode = False
