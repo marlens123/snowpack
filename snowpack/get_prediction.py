@@ -16,7 +16,7 @@ from train_epochs import MulticlassSAMWrapper
 parser = argparse.ArgumentParser()
 
 
-parser.add_argument('--image_path', type=str, default='snowpack/data/multiclass_10_2/test/images/9.tiff')
+parser.add_argument('--image_path', type=str, default='snowpack/data/multiclass_10_2/train/images/10.tiff')
 parser.add_argument('--saved_model_location', type=str, default='snowpack/model/model_checkpoints/snowpack_sam2_revert_boundary_resize_simple_100.torch')
 parser.add_argument('--save_image_location', type=str, default='final_mask.pt')
 
@@ -24,7 +24,7 @@ parser.add_argument('--n_classes', default=21, type=int)
 parser.add_argument('--multiclass', default=True, action='store_true')
 
 parser.add_argument('--patch_size', default=400, type=int)
-parser.add_argument('--min_overlap', default=200, type=int)
+parser.add_argument('--min_overlap', default=100, type=int)
 parser.add_argument('--edge_buffer', default=6, type=int) # if too high, may create lines. but same if too low
 
 
@@ -39,6 +39,7 @@ def main():
     patch_size = args.patch_size
     min_overlap = args.min_overlap
     edge_buffer = args.edge_buffer
+    more_overlap = True # if issue with borders that edge buffer doesn't solve
 
 
     mean = np.array([0.485, 0.456, 0.406])
@@ -76,6 +77,12 @@ def main():
     patches, patch_coords = chunk_image_no_padding(image, patch_size, min_overlap)
     patches = [test_transform(i).permute(1, 2, 0) for i in patches]
 
+    if more_overlap:
+        patches2, patch_coords2 = chunk_image_no_padding(image, patch_size, min_overlap+50)
+        patches2 = [test_transform(i).permute(1, 2, 0) for i in patches2]
+
+        patches.extend(patches2)
+        patch_coords.extend(patch_coords2)
 
 
     width, height = image.size
