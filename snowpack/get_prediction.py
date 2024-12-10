@@ -4,6 +4,8 @@ import torch.nn.functional as F
 from torchvision.transforms import v2
 
 from PIL import Image
+import cv2
+
 from tqdm import tqdm
 import argparse
 
@@ -14,6 +16,7 @@ from train_epochs import MulticlassSAMWrapper
 
 import torchvision.transforms.functional as TF
 
+from scipy.ndimage import label
 
 
 parser = argparse.ArgumentParser()
@@ -29,8 +32,8 @@ parser.add_argument('--patch_size', default=400, type=int)
 parser.add_argument('--min_overlap', default=200, type=int)
 parser.add_argument('--edge_buffer', default=2, type=int) # if too high, may create lines. but same if too low
 
-parser.add_argument('--gaussian_smoothing', default=True, action='store_true')
-parser.add_argument('--total_variation_smoothing', default=False, action='store_true') # denoises, preservers boundaries more than gaussian
+parser.add_argument('--gaussian_smoothing', default=False, action='store_true')
+parser.add_argument('--total_variation_smoothing', default=True, action='store_true') # denoises, preservers boundaries more than gaussian
 
 
 def main():
@@ -45,7 +48,7 @@ def main():
     edge_buffer = args.edge_buffer
     gaussian_smoothing = args.gaussian_smoothing
     total_variation_smoothing = args.total_variation_smoothing  ####### denoising
-    temperature = 0.8 ## 1 is softer, lower means more sharpening
+    temperature = 0.001 ## 1 is softer, lower means more sharpening
 
     mean = np.array([0.485, 0.456, 0.406])
     std = np.array([0.229, 0.224, 0.225])
@@ -96,9 +99,16 @@ def main():
             prd_masks = predictor._transforms.postprocess_masks(low_res_masks, predictor._orig_hw[-1]).float()
             prd_masks = F.interpolate(prd_masks, size=args.patch_size, mode='bilinear', align_corners=False)
             prd_masks = prd_masks.squeeze(0).to(torch.float16)    
+
+            if total_variation_smoothing:
+                prd_masks = total_variation_smooth(prd_masks, tv_weight=0.3)
+
             prd_masks = torch.softmax(prd_masks / temperature, dim=0)
-               
+  
             prd_masks = apply_weight_mask(prd_masks, args.patch_size, edge_buffer=edge_buffer)
+
+            # prd_masks = amplify_boundaries(prd_masks)
+            # prd_masks = clean_broken_lines(prd_masks)
 
             # Determine valid region
             right = min(x + patch_width, width)
@@ -113,7 +123,6 @@ def main():
 
     overlap_count = overlap_count.clamp(min=1)
     combined_probabilities /= overlap_count.unsqueeze(0)
-    # combined_probabilities = combined_probabilities.sum(dim=0, keepdim=True)
 
     
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Different smoothings ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
@@ -121,13 +130,18 @@ def main():
        print('Adding gaussian smoothing')
        combined_probabilities = smooth_probabilities(combined_probabilities, kernel_size=3)
 
-    if total_variation_smoothing:
-        print('Adding total variation smoothing (denoises)')
-        combined_probabilities = total_variation_smooth(combined_probabilities, tv_weight=0.05)
+    # if total_variation_smoothing:
+    #     print('Adding total variation smoothing (denoises)')
+    #     combined_probabilities = total_variation_smooth(combined_probabilities, tv_weight=0.7)
+
+    # combined_probabilities = smooth_line_interiors(combined_probabilities, kernel_size=11)
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Different smoothings ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
 
     final_mask = torch.argmax(combined_probabilities, dim=0)
 
+    if total_variation_smoothing:
+        print('Adding total variation smoothing (denoises) again')
+        final_mask = total_variation_smooth_final(final_mask, kernel_size=5)
 
 
     torch.save(final_mask, save_image_location)
@@ -313,6 +327,35 @@ def total_variation_smooth(probability_map, tv_weight=0.1):
     return smoothed_map
 
 
+def total_variation_smooth_final(segmentation_mask, kernel_size=3):
+    """
+    Applies Total Variation-like smoothing to a segmented mask after argmax.
+
+    Args:
+        segmentation_mask (torch.Tensor): Segmented mask of shape (H, W), with integer class labels.
+        kernel_size (int): Size of the smoothing kernel.
+
+    Returns:
+        torch.Tensor: Smoothed segmentation mask.
+    """
+    height, width = segmentation_mask.shape
+
+    # Convert to one-hot encoding
+    num_classes = int(segmentation_mask.max()) + 1
+    one_hot = F.one_hot(segmentation_mask.long(), num_classes=num_classes).permute(2, 0, 1).float()  # (C, H, W)
+
+    # Apply a smoothing kernel (Gaussian or Mean Filter)
+    kernel = torch.ones((num_classes, 1, kernel_size, kernel_size), device=segmentation_mask.device) / (kernel_size ** 2)
+
+    smoothed = F.conv2d(one_hot.unsqueeze(0), kernel, padding=kernel_size // 2, groups=num_classes).squeeze(0)  # (C, H, W)
+
+    # Assign each pixel to the class with the highest smoothed probability
+    smoothed_mask = torch.argmax(smoothed, dim=0)
+
+    return smoothed_mask
+
+
+
 def smooth_across_layers(probability_map, weight=0.8):
     """
     Smooth probabilities across class layers by blending each layer with its neighbors.
@@ -361,5 +404,100 @@ def smooth_probabilities(probability_map, kernel_size=5):
 
 
 
+
+
+def amplify_boundaries(probability_map, amplification_factor=2):
+    """
+    Amplifies line boundaries in a probability map using edge detection.
+
+    Args:
+        probability_map (torch.Tensor): Probability map of shape (C, H, W).
+        amplification_factor (float): Factor by which to amplify the boundaries.
+
+    Returns:
+        torch.Tensor: Adjusted probability map.
+    """
+    num_classes, height, width = probability_map.shape
+    adjusted_map = probability_map.clone()
+
+    for c in range(num_classes):
+        # Convert to NumPy for edge detection
+        mask_np = probability_map[c].cpu().numpy()
+        
+        # Detect edges using Sobel or Canny
+        sobel_x = cv2.Sobel(mask_np, cv2.CV_64F, 1, 0, ksize=3)
+        sobel_y = cv2.Sobel(mask_np, cv2.CV_64F, 0, 1, ksize=3)
+        edges = np.sqrt(sobel_x**2 + sobel_y**2)
+        edges = (edges > edges.mean()).astype(np.float32)  # Threshold for strong edges
+
+        # Amplify detected boundaries
+        adjusted_map[c] += torch.tensor(edges, device=probability_map.device) * amplification_factor
+
+    return adjusted_map
+
+
+
+def clean_broken_lines(probability_map, kernel_size=3):
+    """
+    Cleans broken lines using morphological closing.
+
+    Args:
+        probability_map (torch.Tensor): Probability map of shape (C, H, W).
+        kernel_size (int): Size of the closing kernel.
+
+    Returns:
+        torch.Tensor: Cleaned probability map.
+    """
+    num_classes, height, width = probability_map.shape
+    cleaned_map = probability_map.clone()
+
+    kernel = np.ones((kernel_size, kernel_size), np.uint8)
+
+    for c in range(num_classes):
+        mask_np = probability_map[c].cpu().numpy()
+        
+        # Apply morphological closing
+        closed = cv2.morphologyEx(mask_np, cv2.MORPH_CLOSE, kernel)
+        
+        cleaned_map[c] = torch.tensor(closed, device=probability_map.device)
+
+    return cleaned_map
+def smooth_line_interiors(probability_map, kernel_size=5):
+    """
+    Smooths the interiors of lines in a probability map.
+
+    Args:
+        probability_map (torch.Tensor): Probability map of shape (C, H, W).
+        kernel_size (int): Size of the Gaussian kernel.
+
+    Returns:
+        torch.Tensor: Smoothed probability map.
+    """
+    num_classes, height, width = probability_map.shape
+    smoothed_map = probability_map.clone()
+
+    for c in range(num_classes):
+        mask_np = probability_map[c].cpu().numpy()
+        
+        # Detect edges and create a mask
+        sobel_x = cv2.Sobel(mask_np, cv2.CV_64F, 1, 0, ksize=3)
+        sobel_y = cv2.Sobel(mask_np, cv2.CV_64F, 0, 1, ksize=3)
+        edges = np.sqrt(sobel_x**2 + sobel_y**2)
+        edges = (edges > edges.mean()).astype(np.uint8)
+
+        # Dilate the edge mask
+        dilated_edges = cv2.dilate(edges, np.ones((3, 3), np.uint8), iterations=1)
+
+        # Smooth the interior of the dilated edges
+        smoothed_np = cv2.GaussianBlur(mask_np, (kernel_size, kernel_size), 0)
+        smoothed_map[c] = torch.tensor(mask_np * dilated_edges + smoothed_np * (1 - dilated_edges), 
+                                       device=probability_map.device)
+
+    return smoothed_map
+
+
+
 if __name__ == "__main__":
     main()
+
+
