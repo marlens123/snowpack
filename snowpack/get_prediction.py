@@ -19,7 +19,7 @@ import torchvision.transforms.functional as TF
 parser = argparse.ArgumentParser()
 
 
-parser.add_argument('--image_path', type=str, default='snowpack/data/multiclass_10_2/train/images/10.tiff')
+parser.add_argument('--image_path', type=str, default='snowpack/data/multiclass_10_2/test/images/9.tiff')
 parser.add_argument('--saved_model_location', type=str, default='snowpack/model/model_checkpoints/snowpack_sam2_revert_boundary_resize_simple_100.torch')
 parser.add_argument('--save_image_location', type=str, default='final_mask.pt')
 
@@ -29,9 +29,8 @@ parser.add_argument('--patch_size', default=400, type=int)
 parser.add_argument('--min_overlap', default=200, type=int)
 parser.add_argument('--edge_buffer', default=2, type=int) # if too high, may create lines. but same if too low
 
-
-parser.add_argument('--smoothing', default=False, action='store_true')
-parser.add_argument('--smoothing_kernel', default=5, type=int)
+parser.add_argument('--gaussian_smoothing', default=True, action='store_true')
+parser.add_argument('--total_variation_smoothing', default=True, action='store_true') # denoises, preservers boundaries more than gaussian
 
 
 def main():
@@ -44,8 +43,8 @@ def main():
     patch_size = args.patch_size
     min_overlap = args.min_overlap
     edge_buffer = args.edge_buffer
-    smoothing = args.smoothing
-    smoothing_kernel = args.smoothing_kernel
+    gaussian_smoothing = args.gaussian_smoothing
+    total_variation_smoothing = args.total_variation_smoothing  ####### denoising
 
     mean = np.array([0.485, 0.456, 0.406])
     std = np.array([0.229, 0.224, 0.225])
@@ -111,8 +110,17 @@ def main():
 
     overlap_count = overlap_count.clamp(min=1)
     combined_probabilities /= overlap_count.unsqueeze(0)
-    if smoothing:
-       combined_probabilities = smooth_probabilities(combined_probabilities, kernel_size=smoothing_kernel)
+
+    
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Different smoothings ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+    if gaussian_smoothing:
+       print('Adding gaussian smoothing')
+       combined_probabilities = smooth_probabilities(combined_probabilities, kernel_size=3)
+
+    if total_variation_smoothing:
+        print('Adding total variation smoothing (denoises)')
+        combined_probabilities = total_variation_smooth(combined_probabilities, tv_weight=0.1)
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Different smoothings ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
 
     final_mask = torch.argmax(combined_probabilities, dim=0)
 
@@ -276,6 +284,60 @@ def apply_weight_mask(probability_mask, patch_size, boost_factor=5, radius_facto
 
     # Apply the weight map to the probability mask
     return probability_mask * final_weight_map.unsqueeze(0)  # Add channel dimension
+
+
+def total_variation_smooth(probability_map, tv_weight=0.1):
+    """
+    Apply Total Variation (TV) smoothing to the probability map.
+
+    Args:
+        probability_map (torch.Tensor): Probability map of shape (C, H, W).
+        tv_weight (float): Weight for TV regularization.
+
+    Returns:
+        torch.Tensor: Smoothed probability map.
+    """
+    smoothed_map = probability_map.clone()
+
+    # Compute TV loss gradients
+    for c in range(probability_map.size(0)):  # Loop through classes
+        dx = torch.roll(probability_map[c], shifts=-1, dims=1) - probability_map[c]
+        dy = torch.roll(probability_map[c], shifts=-1, dims=0) - probability_map[c]
+        tv_loss = dx**2 + dy**2
+        smoothed_map[c] -= tv_weight * tv_loss
+
+    return smoothed_map
+
+
+def smooth_across_layers(probability_map, weight=0.8):
+    """
+    Smooth probabilities across class layers by blending each layer with its neighbors.
+
+    Args:
+        probability_map (torch.Tensor): Probability map of shape (C, H, W), where C is the number of classes.
+        weight (float): Weight for the original layer (default: 0.8). Remaining weight is distributed to neighbors.
+
+    Returns:
+        torch.Tensor: Smoothed probability map.
+    """
+    num_classes, height, width = probability_map.shape
+    smoothed_map = torch.zeros_like(probability_map)
+
+    for c in range(num_classes):
+        # Original map retains `weight`
+        smoothed_layer = probability_map[c] * weight
+        
+        # Add contribution from neighbors (previous and next classes)
+        if c > 0:
+            smoothed_layer += probability_map[c - 1] * (1 - weight) / 2
+        if c < num_classes - 1:
+            smoothed_layer += probability_map[c + 1] * (1 - weight) / 2
+
+        smoothed_map[c] = smoothed_layer
+
+    return smoothed_map
+
+
 
 
 
