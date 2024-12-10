@@ -6,7 +6,7 @@ This repository fine-tunes SAM2 to segment near-infrared (NIR) images of snowpac
 
 ## Acknowledgements
 
-This repository relies on Francis Pelletier's repository template, licensed under MIT. Our model uses SAM2, licensed under Apache-2.0. We thankfully the authors for making their code publicly available.
+This repository relies on Francis Pelletier's repository template, licensed under MIT. This project uses SAM2, licensed under Apache-2.0. We thankfully the authors for making their code publicly available.
  
 ## Python Version
 
@@ -134,12 +134,10 @@ If you want to contribute to this repository, the development dependencies will 
      dependencies, unless you are already familiar with dependency management. 
 5. Read and follow the [Contributing guidelines](CONTRIBUTING.md)
 
-
 ## Pre-training Checkpoints
 
 Download the SAM2 pre-training checkpoints by running:
 
-`!wget -O sam2_hiera_tiny.pt "https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2.1_hiera_tiny.pt"`
 `!wget -O sam2_hiera_small.pt "https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2.1_hiera_small.pt"`
 
 Please store the checkpoints in `snowpack/model/model_checkpoints`.

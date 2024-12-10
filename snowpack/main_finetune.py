@@ -103,7 +103,6 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     NUM_EPOCHS = config['num_epochs']
-    NUM_EPOCHS_K_FOLD = 100  # idk what this should be
     FINETUNED_MODEL_NAME = "snowpack_sam2"
 
     # TODO: look into that later
@@ -119,7 +118,7 @@ def main():
             dataset = get_full_image_dataset(config, train_image_path=f'{args.data_path}train/images/',
                                                 train_mask_path=f'{args.data_path}train/masks/',
                                                 )
-        k_fold(args, config, dataset, accumulation_steps, NUM_EPOCHS_K_FOLD, device, pref, class_weights, k=config['num_k_fold'])
+        k_fold(args, config, dataset, accumulation_steps, NUM_EPOCHS, device, pref, class_weights, k=config['num_k_fold'])
 
     else:
         if config['chunking']:
@@ -176,19 +175,18 @@ def get_full_image_dataset(cfg, train_image_path=None,
                            test_mask_path=None,
                            ):
 
-    if cfg['resize_method'] == "resize_retain_aspect":
-        train_images, train_masks = load_tifs_resize_to_np_retain_ratio(train_image_path, train_mask_path)
-    elif cfg['resize_method'] == "resize_simple":
-        train_images, train_masks = load_tifs_resize_to_np(train_image_path, train_mask_path)
-    else:
-        raise NotImplementedError
-    
     if cfg['full_transform']:
         train_transform_images, train_transform_masks_and_images, test_transforms = get_full_transformation(mean=cfg['mean'], std=cfg['std'])
     else:
         train_transform_images, train_transform_masks_and_images, test_transforms = get_base_transformation()
 
     if train_image_path is not None:
+        if cfg['resize_method'] == "resize_retain_aspect":
+            train_images, train_masks = load_tifs_resize_to_np_retain_ratio(train_image_path, train_mask_path)
+        elif cfg['resize_method'] == "resize_simple":
+            train_images, train_masks = load_tifs_resize_to_np(train_image_path, train_mask_path)
+        else:
+            raise NotImplementedError
         train_dataset = SnowDataset(train_images, train_masks, transform_images=train_transform_images, transform_masks_and_images=train_transform_masks_and_images, boundary_mask=cfg['boundary_mask'], 
                                     size_strategy=cfg['resize_method'], dilate=cfg['dilate'], kernel_size=cfg['kernel_size'], revert=cfg['revert'])
         if not test_image_path:
@@ -202,6 +200,9 @@ def get_full_image_dataset(cfg, train_image_path=None,
         raise NotImplementedError
 
     test_dataset = SnowDataset(test_images, test_masks, transform=test_transforms, dilate=cfg['dilate'], boundary_mask=cfg['boundary_mask'], kernel_size=cfg['kernel_size'], revert=cfg['revert'])
+
+    if not train_image_path:
+        return test_dataset
 
     return train_dataset, test_dataset
 
@@ -255,6 +256,11 @@ def regular_train(args, cfg, train_dataset, test_dataset, accumulation_steps,
             mean_test_iou = validate_multiclass(val_loader, predictor, device)
             if args.use_wandb:
                 wandb.log({"epoch": epoch, "train_loss": loss, "mean_train_iou": mean_train_iou, "mean_test_iou": mean_test_iou})
+
+            # if epoch is divisible by 10
+            if epoch % 10 == 0:
+                FINETUNED_MODEL = FINETUNED_MODEL_NAME + "_" + str(pref) + "_" + str(epoch) + ".torch"
+                torch.save(predictor.model.state_dict(), os.path.join("snowpack/model/model_checkpoints", FINETUNED_MODEL))
         else:
             mean_train_iou, loss = binary_epoch(train_loader, predictor, accumulation_steps, epoch, optimizer, device)
             mean_test_iou = validate_binary(val_loader, predictor, epoch, device, args)
