@@ -90,6 +90,7 @@ def main():
 
     print('Combining masks')
     resized_masks = resize_probability_masks(np.array(masks), target_size=400)
+    del masks
     probabilities = recombine_patches(resized_masks, patch_coords, image.size, edge_buffer=edge_buffer)
     final_mask = generate_final_mask(probabilities)
     print(f'Saved mask at {save_image_location}')
