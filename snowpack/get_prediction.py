@@ -45,6 +45,7 @@ def main():
     edge_buffer = args.edge_buffer
     gaussian_smoothing = args.gaussian_smoothing
     total_variation_smoothing = args.total_variation_smoothing  ####### denoising
+    temperature = 0.1 ## 1 is softer, lower means more sharpening
 
     mean = np.array([0.485, 0.456, 0.406])
     std = np.array([0.229, 0.224, 0.225])
@@ -94,7 +95,9 @@ def main():
                                             predictor._features["image_embed"][-1].unsqueeze(0))
             prd_masks = predictor._transforms.postprocess_masks(low_res_masks, predictor._orig_hw[-1]).float()
             prd_masks = F.interpolate(prd_masks, size=args.patch_size, mode='bilinear', align_corners=False)
-            prd_masks = prd_masks.squeeze(0).to(torch.float16)       
+            prd_masks = prd_masks.squeeze(0).to(torch.float16)    
+            prd_masks = torch.softmax(prd_masks / temperature, dim=0)
+               
             prd_masks = apply_weight_mask(prd_masks, args.patch_size, edge_buffer=edge_buffer)
 
             # Determine valid region
@@ -110,6 +113,7 @@ def main():
 
     overlap_count = overlap_count.clamp(min=1)
     combined_probabilities /= overlap_count.unsqueeze(0)
+    # combined_probabilities = combined_probabilities.sum(dim=0, keepdim=True)
 
     
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Different smoothings ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
@@ -119,7 +123,7 @@ def main():
 
     if total_variation_smoothing:
         print('Adding total variation smoothing (denoises)')
-        combined_probabilities = total_variation_smooth(combined_probabilities, tv_weight=0.1)
+        combined_probabilities = total_variation_smooth(combined_probabilities, tv_weight=0.05)
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Different smoothings ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
 
     final_mask = torch.argmax(combined_probabilities, dim=0)
