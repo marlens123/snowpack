@@ -20,7 +20,7 @@ from snowpack.dataset.data_utils import load_tifs_resize_to_np, load_tifs_resize
 from snowpack.dataset.dataset import SnowDataset
 from snowpack.dataset.dynamic_tiled_dataset import DynamicImagePatchesDataset
 from snowpack.train_epochs import *
-from snowpack.dataset.augmentation import get_transformation
+from snowpack.dataset.augmentation import get_full_transformation, get_base_transformation
 
 from torch.utils.data import DataLoader
 
@@ -35,23 +35,20 @@ import cv2
 import wandb
 
 from sklearn.model_selection import KFold
-import copy
 
 
 parser = argparse.ArgumentParser(description="PyTorch Unet Training")
 
 parser.add_argument(
-    "--path_to_config", type=str, default="configs/revert_boundary_resize_simple.json", help="hyperparameter configuration"
+    "--path_to_config", type=str, default="configs/multiclass_boundary.json", help="hyperparameter configuration"
 )
 parser.add_argument(
     "--seed", default=84, type=int, help="seed for initializing training."
 )
 parser.add_argument("--gpu", default=0, help="GPU id to use.")
-
 parser.add_argument(
     "--data_path", type=str, default="snowpack/data/multiclass_10_2_boundary_2_pixels/" # this one has 21 classes
 )
-
 parser.add_argument(
     '--use_wandb', 
     default=True, 
@@ -63,23 +60,12 @@ parser.add_argument(
     type=str,
     default="sea-ice"
 )
-
 parser.add_argument(
     '--do_kfold', 
     default=False, 
     action='store_true', 
     help='do kfold cross validation'
 )
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
-parser.add_argument(
-    '--multiclass', 
-    default=False, 
-    action='store_true', 
-    help='do multiclass training'
-)
-parser.add_argument('--n_classes', default=21, type=int)
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
-
 
 def main():
     args = parser.parse_args()
@@ -115,53 +101,38 @@ def main():
             print("CUDA is not available.")
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    
-    # TODO: binarize / erode masks (so that we don't have points that are too close to the border)
-    # Note: the eroded mask only seems to be used for prompt generation (slightly reduces mask size)
-    # (do we have noisy boundaries?)
-    # Prompts: https://www.datacamp.com/tutorial/sam2-fine-tuning
-    # TODO: Visualization of the selected points / prompts
 
     NUM_EPOCHS = config['num_epochs']
-    NUM_EPOCHS_K_FOLD = 20  # idk what this should be
+    NUM_EPOCHS_K_FOLD = 100  # idk what this should be
     FINETUNED_MODEL_NAME = "snowpack_sam2"
-    NUM_K_FOLDS = 3 # should be higher with a bigger batch size
-    # Very lazy config updates:
-    config['chunking'] = True
-    config['learning_rate'] = config['learning_rate'] * 100
-    if args.multiclass:
-        config['mask_type'] = 'layer'
-        print(f'Currently doing multiclass with {args.n_classes} classes. Need to have data folder location match up too')
-        
-    class_weights = get_class_weights(args.data_path, device) if args.multiclass else None
-    # TODO: NOTE: I multiplied the learning rate by 100, might want that/might not want that
-    # also scheduler is now different and idk if that's good tbh (older/original version is commented out)
 
-    accumulation_steps = 7
+    # TODO: look into that later
+    class_weights = None
+
+    accumulation_steps = config['accumulation_steps']
 
     if args.do_kfold:
         # train here has to include everything
         if config['chunking']:
-            dataset = get_dynamic_tiled_dataset(config, args, train_path=f'{args.data_path}train/')
+            dataset = get_dynamic_tiled_dataset(config, train_path=f'{args.data_path}train/')
         else:
-            dataset = get_full_image_dataset(config, args, train_image_path=f'{args.data_path}train/images/',
+            dataset = get_full_image_dataset(config, train_image_path=f'{args.data_path}train/images/',
                                                 train_mask_path=f'{args.data_path}train/masks/',
                                                 )
-        k_fold(args, config, dataset, accumulation_steps, NUM_EPOCHS_K_FOLD, device, pref, class_weights, k=NUM_K_FOLDS)
+        k_fold(args, config, dataset, accumulation_steps, NUM_EPOCHS_K_FOLD, device, pref, class_weights, k=config['num_k_fold'])
 
     else:
         if config['chunking']:
-            train_dataset, test_dataset = get_dynamic_tiled_dataset(config, args, train_path=f'{args.data_path}train/',
+            train_dataset, test_dataset = get_dynamic_tiled_dataset(config, train_path=f'{args.data_path}train/',
                                                                     test_path=f'{args.data_path}test/'
                                                                     )
         else:
-            train_dataset, test_dataset = get_full_image_dataset(config, args, train_image_path=f'{args.data_path}train/images/',
+            train_dataset, test_dataset = get_full_image_dataset(config, train_image_path=f'{args.data_path}train/images/',
                                                                     train_mask_path=f'{args.data_path}train/masks/',
                                                                     test_image_path=f'{args.data_path}test/images/',
                                                                     test_mask_path=f'{args.data_path}test/masks/'
                                                                     )
-        regular_train(args, config, train_dataset, test_dataset, accumulation_steps, FINETUNED_MODEL_NAME, NUM_EPOCHS, device, pref, class_weights, first_class_is_1=False)
-
+        regular_train(args, config, train_dataset, test_dataset, accumulation_steps, FINETUNED_MODEL_NAME, NUM_EPOCHS, device, pref, class_weights)
 
 
 def get_model_optimizer_scaler_scheduler(args, config, device):
@@ -171,8 +142,8 @@ def get_model_optimizer_scaler_scheduler(args, config, device):
     model_cfg = 'configs/sam2.1/sam2.1_hiera_s.yaml'
     sam2_model = build_sam2(config_file=model_cfg, ckpt_path=sam2_checkpoint, device=device)
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
-    if args.multiclass:
-        sam2_model = MulticlassSAMWrapper(sam2_model, args.n_classes).to(device)
+    if not config['boundary_mask']:
+        sam2_model = MulticlassSAMWrapper(sam2_model, config['n_classes']).to(device)
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
     predictor = SAM2ImagePredictor(sam2_model)
 
@@ -192,19 +163,17 @@ def get_model_optimizer_scaler_scheduler(args, config, device):
         wandb.watch(predictor.model, log_freq=16)
 
     # Initialize scheduler
-    # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.2) # 500 , 250, gamma = 0.1
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.9) # 500 , 250, gamma = 0.1
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.2) # 500 , 250, gamma = 0.1
+    #scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.9) # 500 , 250, gamma = 0.1
 
     return predictor, optimizer, scaler, scheduler
 
 
 
-def get_full_image_dataset(cfg, args, train_image_path=None, 
+def get_full_image_dataset(cfg, train_image_path=None, 
                            train_mask_path=None,
                            test_image_path=None, 
                            test_mask_path=None,
-                           train_transforms=None,
-                           test_transforms=None
                            ):
 
     if cfg['resize_method'] == "resize_retain_aspect":
@@ -213,11 +182,17 @@ def get_full_image_dataset(cfg, args, train_image_path=None,
         train_images, train_masks = load_tifs_resize_to_np(train_image_path, train_mask_path)
     else:
         raise NotImplementedError
-    # dataset setup
-    train_dataset = SnowDataset(train_images, train_masks, transforms=train_transforms, mask_type=cfg['mask_type'], 
-                                size_strategy=cfg['resize_method'], dilate=cfg['dilate'])
-    if not test_image_path:
-        return train_dataset
+    
+    if cfg['full_transform']:
+        train_transform_images, train_transform_masks_and_images, test_transforms = get_full_transformation(mean=cfg['mean'], std=cfg['std'])
+    else:
+        train_transform_images, train_transform_masks_and_images, test_transforms = get_base_transformation()
+
+    if train_image_path is not None:
+        train_dataset = SnowDataset(train_images, train_masks, transform_images=train_transform_images, transform_masks_and_images=train_transform_masks_and_images, boundary_mask=cfg['boundary_mask'], 
+                                    size_strategy=cfg['resize_method'], dilate=cfg['dilate'], kernel_size=cfg['kernel_size'], revert=cfg['revert'])
+        if not test_image_path:
+            return train_dataset
 
     if cfg['resize_method'] == "resize_retain_aspect":
         test_images, test_masks = load_tifs_resize_to_np_retain_ratio(test_image_path, test_mask_path)
@@ -225,48 +200,38 @@ def get_full_image_dataset(cfg, args, train_image_path=None,
         test_images, test_masks = load_tifs_resize_to_np(test_image_path, test_mask_path)
     else:
         raise NotImplementedError
-    # dataset setup
-    if args.multiclass:
-        test_dataset = SnowDataset(test_images, test_masks, transforms=test_transforms, dilate=cfg['dilate'], mask_type=cfg['mask_type'])
-    else:
-        test_dataset = SnowDataset(test_images, test_masks, transforms=test_transforms, dilate=cfg['dilate'])
+
+    test_dataset = SnowDataset(test_images, test_masks, transform=test_transforms, dilate=cfg['dilate'], boundary_mask=cfg['boundary_mask'], kernel_size=cfg['kernel_size'], revert=cfg['revert'])
 
     return train_dataset, test_dataset
 
 
 def get_dynamic_tiled_dataset(cfg=None, 
-                              args=None,
                               train_path=None,
                               test_path=None
                               ):
     
-    # TODO: messy here, move this into the config
-    mean = [0.485, 0.456, 0.406]
-    std = [0.229, 0.224, 0.225]
-    boundary_mask = False
-    revert = True
-    dilate = True
-    train_transform_images, train_transform_masks_and_images, test_transforms = get_transformation(mean=mean, std=std)
-    #train_transforms, test_transforms = None, None
-    patch_size = 1024
-    overlap = 0
-    kernel_size=20
+    if cfg['full_transform']:
+        train_transform_images, train_transform_masks_and_images, test_transforms = get_full_transformation(mean=cfg['mean'], std=cfg['std'])
+    else:
+        train_transform_images, train_transform_masks_and_images, test_transforms = get_base_transformation()
 
     print("Uses chunking")
 
-    train_ds = DynamicImagePatchesDataset(data_dir=train_path, transform_images=train_transform_images, transform_masks_and_images=train_transform_masks_and_images, patch_size=patch_size, overlap=overlap, inference_mode=False, boundary_mask=boundary_mask, revert=revert, dilate=dilate, kernel_size=kernel_size)
+    if train_path is not None:
+        train_ds = DynamicImagePatchesDataset(data_dir=train_path, transform_images=train_transform_images, transform_masks_and_images=train_transform_masks_and_images, patch_size=cfg['patch_size'], overlap=cfg['overlap'], inference_mode=False, boundary_mask=cfg['boundary_mask'], revert=cfg['revert'], dilate=cfg['dilate'], kernel_size=cfg['kernel_size'])
 
-    if not test_path:
-        return train_ds
+        if not test_path:
+            return train_ds
 
-    test_ds = DynamicImagePatchesDataset(data_dir=test_path, transform=test_transforms, patch_size=patch_size, overlap=overlap, inference_mode=False, boundary_mask=boundary_mask, revert=revert, dilate=dilate, kernel_size=kernel_size)
+    test_ds = DynamicImagePatchesDataset(data_dir=test_path, transform=test_transforms, patch_size=cfg['patch_size'], overlap=cfg['overlap'], inference_mode=False, boundary_mask=cfg['boundary_mask'], revert=cfg['revert'], dilate=cfg['dilate'], kernel_size=cfg['kernel_size'])
 
     return train_ds, test_ds
 
 
 def regular_train(args, cfg, train_dataset, test_dataset, accumulation_steps, 
                   FINETUNED_MODEL_NAME, NUM_EPOCHS, device, pref, class_weights,
-                  num_workers=1, first_class_is_1=True):
+                  num_workers=1):
 
     train_loader = DataLoader(
     train_dataset,
@@ -285,15 +250,16 @@ def regular_train(args, cfg, train_dataset, test_dataset, accumulation_steps,
     predictor, optimizer, scaler, scheduler = get_model_optimizer_scaler_scheduler(args, cfg, device)
 
     for epoch in trange(1, NUM_EPOCHS + 1):
-        if args.multiclass:
-            mean_train_iou, loss = multiclass_epoch(train_loader, predictor, accumulation_steps, epoch, 
-                scheduler, scaler, optimizer, device, class_weights, args, first_class_is_1=True)
-            mean_test_iou = validate_multiclass(val_loader, predictor, epoch, device, args, first_class_is_1=True)
-
+        if not cfg['boundary_mask']:
+            mean_train_iou, loss = multiclass_epoch(train_loader, predictor, accumulation_steps, epoch, optimizer)
+            mean_test_iou = validate_multiclass(val_loader, predictor, device)
+            if args.use_wandb:
+                wandb.log({"epoch": epoch, "train_loss": loss, "mean_train_iou": mean_train_iou, "mean_test_iou": mean_test_iou})
         else:
-            mean_train_iou, loss = binary_epoch(train_loader, predictor, accumulation_steps, epoch, 
-                scheduler, scaler, optimizer, device, class_weights, args)
+            mean_train_iou, loss = binary_epoch(train_loader, predictor, accumulation_steps, epoch, optimizer, device)
             mean_test_iou = validate_binary(val_loader, predictor, epoch, device, args)
+            if args.use_wandb:
+                wandb.log({"epoch": epoch, "train_loss": loss, "train_iou": mean_train_iou, "mean_test_iou": mean_test_iou})
 
 
     FINETUNED_MODEL = FINETUNED_MODEL_NAME + "_" + str(pref) + "_" + str(epoch) + ".torch"
@@ -301,7 +267,7 @@ def regular_train(args, cfg, train_dataset, test_dataset, accumulation_steps,
 
 
 
-def k_fold(args, cfg, dataset, accumulation_steps, NUM_EPOCHS, device, pref, class_weights, k, num_workers=1, first_class_is_1=True):
+def k_fold(args, cfg, dataset, accumulation_steps, NUM_EPOCHS, device, pref, class_weights, k, num_workers=1):
     
     kfold = KFold(n_splits=k, shuffle=True, random_state=args.seed)
     
@@ -324,15 +290,21 @@ def k_fold(args, cfg, dataset, accumulation_steps, NUM_EPOCHS, device, pref, cla
         # Train and validate for the current fold
         # fold_metrics = train_and_validate(train_loader, val_loader, model, optimizer, scheduler, scaler, args, config)
         for epoch in trange(1, NUM_EPOCHS + 1):
-            if args.multiclass:
-                mean_train_iou, loss = multiclass_epoch(train_loader, predictor, accumulation_steps, epoch, 
-                                                    scheduler, scaler, optimizer, device, class_weights, args, first_class_is_1)
-                mean_val_iou = validate_multiclass(val_loader, predictor, epoch, device, args, first_class_is_1)
+            if not cfg['boundary_mask']:
+                mean_train_iou, loss = multiclass_epoch(train_loader, predictor, accumulation_steps, epoch, optimizer)
+                mean_val_iou = validate_multiclass(val_loader, predictor, device)
+                if args.use_wandb:
+                    wandb.log({"epoch": epoch, f"train_loss_fold_{fold}": loss, f"mean_train_iou_{fold}": mean_train_iou, f"mean_test_iou_{fold}": mean_val_iou})
 
             else:
                 mean_train_iou, loss = binary_epoch(train_loader, predictor, accumulation_steps, epoch, 
-                                                    scheduler, scaler, optimizer, device, class_weights, args)
-                mean_val_iou = validate_binary(val_loader, predictor, epoch, device, args)
+                                                    optimizer, device)
+                if epoch == 1:
+                    mean_val_iou = 0
+
+                mean_val_iou = validate_binary(val_loader, predictor, device, mean_val_iou)
+                if args.use_wandb:
+                    wandb.log({"epoch": epoch, f"train_loss_fold_{fold}": loss, f"mean_train_iou_{fold}": mean_train_iou, f"mean_test_iou_{fold}": mean_val_iou})
         fold_metrics = {
             'final_train_iou': mean_train_iou,  # Replace with actual metrics from the training loop
             'final_val_iou': mean_val_iou,

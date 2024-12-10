@@ -11,4 +11,4 @@ poetry install
 
 export WANDB_API_KEY=d2ca547c9f807e8db70308537f4d7b64b6077b81
 
-python -m snowpack.main_inference_zero_shot --path_to_config "configs/revert_boundary_resize_simple_zero_shot.json" --zero_shot
+python -m snowpack.main_inference_zero_shot --path_to_config "configs/layer_resize_simple_zero_shot.json" --zero_shot

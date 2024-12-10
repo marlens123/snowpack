@@ -50,6 +50,9 @@ class DynamicImagePatchesDataset(Dataset):
         if transform_images:
             self.transform_images = transform_images
             self.transform_masks_and_images = transform_masks_and_images
+        else:
+            self.transform_images = None
+            self.transform_masks_and_images = None
         self.num_points = num_points
         self.boundary_mask = boundary_mask
         self.revert = revert
@@ -177,13 +180,22 @@ class DynamicImagePatchesDataset(Dataset):
         patch_row = patch_index // count_x
         patch_col = patch_index % count_x
 
-        left = patch_col * step_size
-        top = patch_row * step_size
-        right = min(left + self.patch_size, width)
-        bottom = min(top + self.patch_size, height)
+        #left = patch_col * step_size
+        #top = patch_row * step_size
+        #right = min(left + self.patch_size, width)
+        #bottom = min(top + self.patch_size, height)
+
+        # Ensure coordinates do not exceed image bounds
+        left = min(patch_col * step_size, max(0, width - self.patch_size))
+        top = min(patch_row * step_size, max(0, height - self.patch_size))
+        right = left + self.patch_size
+        bottom = top + self.patch_size
+
+        assert left < right and top < bottom, f"Invalid crop: {left}, {top}, {right}, {bottom}"
 
         patch = image.crop((left, top, right, bottom))
         return patch
+
     
     def expand_grayscale_channel(self, image):
         # From (H, W) to (H, W, 3) to match the shape of the data the model was pre-trained on
@@ -200,20 +212,15 @@ class DynamicImagePatchesDataset(Dataset):
         image_patch = self.get_patch(self.image_paths[image_and_mask_index], patch_index)
         if not self.inference_mode:
             mask_patch = self.get_patch(self.mask_paths[image_and_mask_index], patch_index)
-            # print("Unique after patching: " + str(mask_patch))
             mask_patch = Mask(mask_patch)
             
         if self.transform is not None or self.transform_images is not None:
             if not self.inference_mode:
-                # print("Transforming")
-                # print("Unique before transforming: " + str(mask_patch))
-                if self.transform_images:
+                if self.transform_images is not None:
                     image_patch, mask_patch = self.transform_masks_and_images(image_patch, mask_patch)
                     image_patch = self.transform_images(image_patch)
                 else:
                     image_patch, mask_patch = self.transform(image_patch, mask_patch)
-                # print("Unique after transforming: " + str(mask_patch))
-                # masks must be in shape (1, H, W) for replacing the batch size
                 mask_patch = mask_patch.permute(2, 0, 1)
             else:
                 image_patch = self.transform(image_patch)
@@ -226,11 +233,7 @@ class DynamicImagePatchesDataset(Dataset):
                 mask_patch = cv2.resize(mask_patch, (1024,1024), interpolation=cv2.INTER_NEAREST)
                 mask_patch = np.expand_dims(np.array(mask_patch), axis=0).astype(np.float32)
 
-        if self.boundary_mask and not self.inference_mode:
-            prompt = np.expand_dims(self.get_points(mask_patch, num_points=self.num_points), axis=1)
-            num_masks = self.num_points
-            return image_patch, mask_patch, prompt, num_masks
-        elif not self.inference_mode:
+        if not self.inference_mode:
             return np.array(image_patch).astype(np.float32), np.array(mask_patch).astype(np.float32)
         else:
             return image_patch

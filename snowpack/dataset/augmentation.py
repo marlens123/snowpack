@@ -15,7 +15,7 @@ class UnTranspose(torch.nn.Module):
     def forward(self, image):
         return image.permute(2,0,1)
 
-def get_transformation(mean, std):
+def get_full_transformation(mean, std):
     """
     Returns training and testing transformations with specified mean and std for grayscale images.
 
@@ -44,7 +44,8 @@ def get_transformation(mean, std):
     )
 
     train_transform_images = v2.Compose(
-        [   UnTranspose(),
+        [   
+            UnTranspose(),
             v2.ColorJitter(contrast=0.1, saturation=0.1, hue=0.1),
             v2.Normalize(mean=mean, std=std),
             Transpose()
@@ -53,12 +54,44 @@ def get_transformation(mean, std):
 
     test_transform = v2.Compose(
         [
-            UnTranspose(),
             v2.ToImage(),
             v2.ToDtype(torch.float32, scale=True),
             v2.Grayscale(3),
             v2.Resize((1024, 1024)),
             v2.Normalize(mean=mean, std=std),
+            Transpose()
+        ]
+    )
+
+    return train_transform_images, train_transform_masks_and_images, test_transform
+
+
+def get_base_transformation():
+
+    train_transform_masks_and_images = v2.Compose(
+        [
+            v2.ToImage(),
+            v2.ToDtype(torch.float32, scale=True),
+            v2.Grayscale(3),  # Convert to 3-channel grayscale image
+            v2.Resize((1024, 1024)),
+            Transpose()
+        ]
+    )
+
+    train_transform_images = v2.Compose(
+        [   
+            UnTranspose(),
+            v2.Resize((1024, 1024)),
+            Transpose()
+        ]
+    )
+
+    test_transform = v2.Compose(
+        [
+            v2.ToImage(),
+            v2.ToDtype(torch.float32, scale=True),
+            v2.Grayscale(3),
+            v2.Resize((1024, 1024)),
             Transpose()
         ]
     )
