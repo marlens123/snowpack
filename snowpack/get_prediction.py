@@ -181,18 +181,6 @@ def resize_probability_masks(probability_masks, target_size):
 
 
 def recombine_patches(probability_class_masks, patch_coords, image_size, edge_buffer=5):
-    """
-    Recombines overlapping probability class masks into a single probability map for the entire image.
-
-    Args:
-        probability_class_masks (list of torch.Tensor): List of predicted probability maps for each patch.
-            Each tensor has shape (C, patch_height, patch_width), where C is the number of classes.
-        patch_coords (list of tuple): List of top-left (x, y) coordinates for each patch.
-        image_size (tuple): (height, width) of the original image.
-
-    Returns:
-        torch.Tensor: Recombined probability map of shape (C, image_height, image_width).
-    """
     num_classes = probability_class_masks[0].shape[0]
     width, height = image_size
 
@@ -200,23 +188,26 @@ def recombine_patches(probability_class_masks, patch_coords, image_size, edge_bu
     combined_probabilities = torch.zeros((num_classes, height, width), dtype=probability_class_masks[0].dtype)
     overlap_count = torch.zeros((height, width), dtype=torch.float32)
 
-    for patch, (x, y) in tqdm(zip(probability_class_masks, patch_coords)):
-        patch = apply_weight_mask(patch, patch.size, edge_buffer)
+    for i, (patch, (x, y)) in enumerate(zip(probability_class_masks, patch_coords)):
         patch_height, patch_width = patch.shape[1], patch.shape[2]
+        patch = apply_weight_mask(patch, patch.size, edge_buffer)
 
-        # Add probabilities to the appropriate region in the combined map
-        combined_probabilities[:, y:y + patch_height, x:x + patch_width] += patch
+        # Determine valid region
+        right = min(x + patch_width, width)
+        bottom = min(y + patch_height, height)
 
-        # Track overlap count
-        overlap_count[y:y + patch_height, x:x + patch_width] += 1
+        # Update the combined map incrementally
+        combined_probabilities[:, y:bottom, x:right] += patch[:, :bottom-y, :right-x]
+        overlap_count[y:bottom, x:right] += 1
 
-    # Avoid division by zero
+        # Discard the patch tensor to free memory
+        del patch
+
     overlap_count = overlap_count.clamp(min=1)
-
-    # Normalize probabilities by the overlap count
-    combined_probabilities /= overlap_count.unsqueeze(0)  # Add channel dimension to match
+    combined_probabilities /= overlap_count.unsqueeze(0)
 
     return combined_probabilities
+   
 
 def apply_weight_mask(probability_mask, patch_size, edge_buffer):
     """
