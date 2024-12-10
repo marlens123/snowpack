@@ -86,7 +86,7 @@ def main():
     
     print('Generating mask')
     with torch.no_grad():
-        for i, (patch, (x, y)) in tqdm(zip(patches, patch_coords), total=len(patches)):
+        for i, (patch, (x, y)) in tqdm(enumerate(zip(patches, patch_coords)), total=len(patches)):
             predictor.set_image(np.array(patch))
             high_res_features = [feat_level[-1].unsqueeze(0) for feat_level in predictor._features["high_res_feats"]]
             low_res_masks = predictor.model(sparse_embeddings, dense_embeddings, high_res_features,
