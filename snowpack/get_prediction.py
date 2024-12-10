@@ -30,7 +30,7 @@ parser.add_argument('--min_overlap', default=200, type=int)
 parser.add_argument('--edge_buffer', default=2, type=int) # if too high, may create lines. but same if too low
 
 parser.add_argument('--gaussian_smoothing', default=True, action='store_true')
-parser.add_argument('--total_variation_smoothing', default=True, action='store_true') # denoises, preservers boundaries more than gaussian
+parser.add_argument('--total_variation_smoothing', default=False, action='store_true') # denoises, preservers boundaries more than gaussian
 
 
 def main():
@@ -45,7 +45,7 @@ def main():
     edge_buffer = args.edge_buffer
     gaussian_smoothing = args.gaussian_smoothing
     total_variation_smoothing = args.total_variation_smoothing  ####### denoising
-    temperature = 0.1 ## 1 is softer, lower means more sharpening
+    temperature = 0.8 ## 1 is softer, lower means more sharpening
 
     mean = np.array([0.485, 0.456, 0.406])
     std = np.array([0.229, 0.224, 0.225])
