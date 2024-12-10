@@ -108,8 +108,8 @@ def main():
             del prd_masks
 
     overlap_count = overlap_count.clamp(min=1)
-    probabilities /= overlap_count.unsqueeze(0)
-    final_mask = torch.argmax(probabilities, dim=0)
+    combined_probabilities /= overlap_count.unsqueeze(0)
+    final_mask = torch.argmax(combined_probabilities, dim=0)
 
     torch.save(final_mask, save_image_location)
     print(f'Saved mask at {save_image_location}')
