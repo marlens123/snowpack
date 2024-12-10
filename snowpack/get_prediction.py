@@ -12,11 +12,14 @@ from sam2.sam2_image_predictor import SAM2ImagePredictor
 
 from train_epochs import MulticlassSAMWrapper
 
+import torchvision.transforms.functional as TF
+
+
 
 parser = argparse.ArgumentParser()
 
 
-parser.add_argument('--image_path', type=str, default='snowpack/data/multiclass_10_2/train/images/1.tiff')
+parser.add_argument('--image_path', type=str, default='snowpack/data/multiclass_10_2/test/images/9.tiff')
 parser.add_argument('--saved_model_location', type=str, default='snowpack/model/model_checkpoints/snowpack_sam2_revert_boundary_resize_simple_100.torch')
 parser.add_argument('--save_image_location', type=str, default='final_mask.pt')
 
@@ -24,7 +27,7 @@ parser.add_argument('--n_classes', default=21, type=int)
 parser.add_argument('--multiclass', default=True, action='store_true')
 
 parser.add_argument('--patch_size', default=400, type=int)
-parser.add_argument('--min_overlap', default=300, type=int)
+parser.add_argument('--min_overlap', default=200, type=int)
 parser.add_argument('--edge_buffer', default=2, type=int) # if too high, may create lines. but same if too low
 
 
@@ -39,8 +42,8 @@ def main():
     patch_size = args.patch_size
     min_overlap = args.min_overlap
     edge_buffer = args.edge_buffer
-    more_overlap = True # if issue with borders that edge buffer doesn't solve
-
+    smoothing = True
+    smoothing_kernel = 5
 
     mean = np.array([0.485, 0.456, 0.406])
     std = np.array([0.229, 0.224, 0.225])
@@ -77,13 +80,6 @@ def main():
     patches, patch_coords = chunk_image_no_padding(image, patch_size, min_overlap)
     patches = [test_transform(i).permute(1, 2, 0) for i in patches]
 
-    # if more_overlap:
-    #     patches2, patch_coords2 = chunk_image_no_padding(image, patch_size, min_overlap+50)
-    #     patches2 = [test_transform(i).permute(1, 2, 0) for i in patches2]
-
-    #     patches.extend(patches2)
-    #     patch_coords.extend(patch_coords2)
-
 
     width, height = image.size
     patch_height, patch_width = args.patch_size, args.patch_size
@@ -101,7 +97,7 @@ def main():
             prd_masks = predictor._transforms.postprocess_masks(low_res_masks, predictor._orig_hw[-1]).float()
             prd_masks = F.interpolate(prd_masks, size=args.patch_size, mode='bilinear', align_corners=False)
             prd_masks = prd_masks.squeeze(0).to(torch.float16)       
-            prd_masks = apply_weight_mask(prd_masks, args.patch_size, edge_buffer)
+            prd_masks = apply_weight_mask(prd_masks, args.patch_size, edge_buffer=edge_buffer)
 
             # Determine valid region
             right = min(x + patch_width, width)
@@ -116,7 +112,12 @@ def main():
 
     overlap_count = overlap_count.clamp(min=1)
     combined_probabilities /= overlap_count.unsqueeze(0)
+    if smoothing:
+       combined_probabilities = smooth_probabilities(combined_probabilities, kernel_size=smoothing_kernel)
+
     final_mask = torch.argmax(combined_probabilities, dim=0)
+
+
 
     torch.save(final_mask, save_image_location)
     print(f'Saved mask at {save_image_location}')
@@ -179,29 +180,119 @@ def chunk_image_no_padding(image, patch_size, min_overlap):
 
 
 
-def apply_weight_mask(probability_mask, patch_size, edge_buffer):
+# def apply_weight_mask(probability_mask, patch_size, edge_buffer):
+#     """
+#     Applies a weight mask to suppress edge effects in predictions.
+
+#     Args:
+#         probability_mask (torch.Tensor): Probability mask of shape (C, H, W).
+#         patch_size (int): Size of the patch.
+#         edge_buffer (int): Number of pixels to ignore along the edges.
+
+#     Returns:
+#         torch.Tensor: Weighted probability mask.
+#     """
+#     C, H, W = probability_mask.shape
+#     weight_mask = torch.ones((H, W), dtype=probability_mask.dtype, device=probability_mask.device)
+
+#     # Create a buffer region near the edges
+#     weight_mask[:edge_buffer, :] = 0  # Top edge
+#     weight_mask[-edge_buffer:, :] = 0  # Bottom edge
+#     weight_mask[:, :edge_buffer] = 0  # Left edge
+#     weight_mask[:, -edge_buffer:] = 0  # Right edge
+
+#     # Apply weight mask to the probability mask
+#     return probability_mask * weight_mask.unsqueeze(0)  
+
+# def apply_weight_mask(probability_mask, patch_size, edge_buffer):
+#     """
+#     Applies a linear weight map to reduce sharp transitions in overlapping patches.
+
+#     Args:
+#         probability_mask (torch.Tensor): Probability mask of shape (C, H, W).
+#         patch_size (int): Size of the patch.
+#         edge_buffer (int): Number of pixels to reduce weight along the edges.
+
+#     Returns:
+#         torch.Tensor: Weighted probability mask.
+#     """
+#     C, H, W = probability_mask.shape
+
+#     # Create 1D linear weights
+#     linear_weights = torch.linspace(0, 1, patch_size - 2 * edge_buffer, device=probability_mask.device)
+#     ramp = torch.cat([torch.zeros(edge_buffer, device=probability_mask.device), linear_weights, 
+#                       torch.ones(patch_size - len(linear_weights) - edge_buffer, device=probability_mask.device)])
+#     weight_map = torch.outer(ramp, ramp)  # Create a 2D weight map
+#     weight_map = weight_map / weight_map.max()  # Normalize weights
+
+#     # Create a buffer region near the edges
+#     weight_map[:edge_buffer, :] = 0  # Top edge
+#     weight_map[-edge_buffer:, :] = 0  # Bottom edge
+#     weight_map[:, :edge_buffer] = 0  # Left edge
+#     weight_map[:, -edge_buffer:] = 0  # Right edge
+
+#     # Apply weight map to probability mask
+#     return probability_mask * weight_map.unsqueeze(0)  # Add channel dimension
+# import torch
+
+def apply_weight_mask(probability_mask, patch_size, boost_factor=5, radius_factor=0.7, edge_buffer=3):
     """
-    Applies a weight mask to suppress edge effects in predictions.
+    Applies a center boost to the weight map while keeping edge weights stable.
 
     Args:
         probability_mask (torch.Tensor): Probability mask of shape (C, H, W).
         patch_size (int): Size of the patch.
-        edge_buffer (int): Number of pixels to ignore along the edges.
+        boost_factor (float): Multiplier for the center weight boost.
+        radius_factor (float): Determines the size of the boosted region (0.5 = half the patch).
 
     Returns:
         torch.Tensor: Weighted probability mask.
     """
     C, H, W = probability_mask.shape
-    weight_mask = torch.ones((H, W), dtype=probability_mask.dtype, device=probability_mask.device)
 
-    # Create a buffer region near the edges
-    weight_mask[:edge_buffer, :] = 0  # Top edge
-    weight_mask[-edge_buffer:, :] = 0  # Bottom edge
-    weight_mask[:, :edge_buffer] = 0  # Left edge
-    weight_mask[:, -edge_buffer:] = 0  # Right edge
+    # Base weight map with uniform weights
+    weight_map = torch.ones((H, W), dtype=probability_mask.dtype, device=probability_mask.device)
 
-    # Apply weight mask to the probability mask
-    return probability_mask * weight_mask.unsqueeze(0)  
+    # Create a 2D grid
+    y, x = torch.meshgrid(
+        torch.linspace(-1, 1, H, device=probability_mask.device),
+        torch.linspace(-1, 1, W, device=probability_mask.device),
+        indexing='ij'
+    )
+    # Calculate radial distance from the center
+    radius = torch.sqrt(x**2 + y**2)
+
+    # Create a center boost (Gaussian-like bump)
+    center_boost = torch.exp(-radius**2 / (2 * radius_factor**2)) * boost_factor
+
+    # Combine the base weight map with the center boost
+    final_weight_map = weight_map + center_boost
+    final_weight_map = final_weight_map / final_weight_map.max()  # Normalize weights
+
+  # Create a buffer region near the edges
+    final_weight_map[:edge_buffer, :] = 0  # Top edge
+    final_weight_map[-edge_buffer:, :] = 0  # Bottom edge
+    final_weight_map[:, :edge_buffer] = 0  # Left edge
+    final_weight_map[:, -edge_buffer:] = 0  # Right edge
+
+    # Apply the weight map to the probability mask
+    return probability_mask * final_weight_map.unsqueeze(0)  # Add channel dimension
+
+
+
+def smooth_probabilities(probability_map, kernel_size=5):
+    """
+    Applies a Gaussian blur to smooth the probability map.
+
+    Args:
+        probability_map (torch.Tensor): Probability map of shape (C, H, W).
+        kernel_size (int): Size of the Gaussian kernel.
+
+    Returns:
+        torch.Tensor: Smoothed probability map.
+    """
+    smoothed_map = TF.gaussian_blur(probability_map.unsqueeze(0), kernel_size=kernel_size).squeeze(0)
+    return smoothed_map
 
 
 
