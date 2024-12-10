@@ -25,7 +25,7 @@ parser.add_argument('--multiclass', default=True, action='store_true')
 
 parser.add_argument('--patch_size', default=400, type=int)
 parser.add_argument('--min_overlap', default=200, type=int)
-parser.add_argument('--edge_buffer', default=4, type=int) # if too high, may create lines. but same if too low
+parser.add_argument('--edge_buffer', default=6, type=int) # if too high, may create lines. but same if too low
 
 
 def main():
