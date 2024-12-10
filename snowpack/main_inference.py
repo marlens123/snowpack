@@ -19,6 +19,7 @@ from torch.utils.data import DataLoader
 
 from sam2.build_sam import build_sam2
 from sam2.sam2_image_predictor import SAM2ImagePredictor
+from snowpack.train_epochs import MulticlassSAMWrapper
 
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
@@ -36,7 +37,7 @@ parser.add_argument(
 )
 parser.add_argument("--gpu", default=0, help="GPU id to use.")
 parser.add_argument(
-    "--test_path", type=str, default="snowpack/data/multiclass_10_2_boundary_pixels"
+    "--data_path", type=str, default="snowpack/data/multiclass_10_2_boundary_2_pixels/"
 )
 parser.add_argument(
     "--finetuning_checkpoint", type=str, default="", help="Finetuning checkpoint. Only used when zero shot is false"
@@ -57,6 +58,8 @@ def main():
     with open(args.path_to_config) as f:
         cfg = json.load(f)
 
+    cfg['full_transform'] = False
+
     if args.gpu != "cpu":
         warnings.warn(
             "You have chosen a specific GPU. This will completely "
@@ -66,7 +69,7 @@ def main():
     if cfg['chunking']:
         _, test_dataset = get_dynamic_tiled_dataset(cfg, test_path=f'{args.data_path}test/')
     else:
-        _, test_dataset = get_full_image_dataset(cfg, test_image_path=f'{args.data_path}test/images/',
+        test_dataset = get_full_image_dataset(cfg, test_image_path=f'{args.data_path}test/images/',
                                             test_mask_path=f'{args.data_path}test/masks/',
                                             )
 
@@ -86,24 +89,35 @@ def main_worker(test_dataset, config):
         test_dataset, batch_size=1, shuffle=False, num_workers=0
     )
 
+    n_classes = 21
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
     # Load the fine-tuned model
     sam2_checkpoint = "snowpack/model/model_checkpoints/sam2.1_hiera_small.pt"
     #with resources.open_text('snowpack', ) as file:
     model_cfg = 'configs/sam2.1/sam2.1_hiera_s.yaml'
     sam2_model = build_sam2(model_cfg, sam2_checkpoint, device="cuda")
 
-    # Build net and load weights
-    predictor = SAM2ImagePredictor(sam2_model)
-
     if not args.zero_shot:
         print("Using finetuned weights.")
         saved_epoch = config['num_epochs']
+        sam2_model_with_multi = MulticlassSAMWrapper(sam2_model, n_classes).to(device)
+        predictor = SAM2ImagePredictor(sam2_model_with_multi)        
         FINE_TUNED_MODEL_WEIGHTS = f"snowpack/model/model_checkpoints/snowpack_sam2_{checkpoint_pref}_{saved_epoch}.torch"
         predictor.model.load_state_dict(torch.load(FINE_TUNED_MODEL_WEIGHTS))
     else:
         print("Running inference zero shot.")
+        predictor = SAM2ImagePredictor(sam2_model)
 
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    predictor.model.to(device)
+    sparse_embeddings = torch.zeros((1, 1, 256), device=predictor.model.device)
+    dense_prompt_embeddings = torch.zeros((1, 256, 256), device=predictor.model.device)
+    dense_embeddings = F.interpolate(
+        dense_prompt_embeddings.unsqueeze(0),  # Add batch dimension
+        size=(64, 64),  # Match expected spatial resolution of src
+        mode='bilinear',
+        align_corners=False
+    ).squeeze(0)  # Remove batch dimension if necessary
 
     epoch_mean_iou = []
     for idx, tup in enumerate(test_loader):
@@ -112,16 +126,6 @@ def main_worker(test_dataset, config):
 
         with torch.no_grad():
             predictor.set_image(image)
-
-            # Generate embeddings (can be skipped for multiclass if prompts are not used)
-            sparse_embeddings = torch.zeros((1, 1, 256), device=predictor.model.device)
-            dense_prompt_embeddings = torch.zeros((1, 256, 256), device=predictor.model.device)
-            dense_embeddings = F.interpolate(
-                dense_prompt_embeddings.unsqueeze(0),
-                size=(64, 64),
-                mode='bilinear',
-                align_corners=False
-            ).squeeze(0)
 
             # Obtain predictions
             batched_mode = False
@@ -153,7 +157,8 @@ def main_worker(test_dataset, config):
             print(f"Validation Mean IoU: {mean_iou}")
 
         if args.full_image:
-            visualize_full_image_result(image, mask, prd_masks, store_pref, idx)
+            save_prd_result(prd_masks, store_pref, idx)
+            #visualize_full_image_result(image, mask, prd_masks, store_pref, idx)
         else:
             print("Chunking visualization not yet implemented!")
 
@@ -205,6 +210,13 @@ def main_worker(test_dataset, config):
         else:
             seg_map = np.transpose(masks, (1, 2, 0))
 """
+
+def save_prd_result(prd_mask, pref, i):
+    # min-max scaling
+    prd_mask = (prd_mask - prd_mask.min()) / (prd_mask.max() - prd_mask.min()) * 255
+    import cv2
+    cv2.imwrite(f"{pref}_{i}.png", prd_mask)
+
 
 def visualize_full_image_result(image, gt, pred_mask, store_pref, idx):
     # Visualization: Show the original image, mask, and final segmentation side by side

@@ -99,7 +99,8 @@ class SnowDataset(BaseDataset):
         #image = self.normalize_image(image)
 
         if self.transform is not None or self.transform_images is not None:
-            mask = np.expand_dims(mask, axis=0).astype(np.float32)
+            mask = np.expand_dims(mask, axis=-1).astype(np.float32)
+            print(image.shape, mask.shape)
             if self.transform_images is not None:
                 mask = Mask(mask)
                 image, mask = self.transform_masks_and_images(image, mask)
