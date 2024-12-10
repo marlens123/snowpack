@@ -2,7 +2,7 @@
 name = "snowpack"
 version = "0.0.0"
 description = "snowpack layer segmentation"
-authors = ["Jennifer Marks, Karla Felix Navarro, Olya Mastikhina, Marlena Reil <marlena1@gmx.de>"]
+authors = ["Jennifer Marks, Karla Felix Navarro, Olya Mastikhina, Marlena Reil"]
 license = "MIT"
 readme = "README.md"
 
