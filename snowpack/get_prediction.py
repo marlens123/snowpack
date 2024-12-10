@@ -24,11 +24,14 @@ parser.add_argument('--saved_model_location', type=str, default='snowpack/model/
 parser.add_argument('--save_image_location', type=str, default='final_mask.pt')
 
 parser.add_argument('--n_classes', default=21, type=int)
-parser.add_argument('--multiclass', default=True, action='store_true')
 
 parser.add_argument('--patch_size', default=400, type=int)
 parser.add_argument('--min_overlap', default=200, type=int)
 parser.add_argument('--edge_buffer', default=2, type=int) # if too high, may create lines. but same if too low
+
+
+parser.add_argument('--smoothing', default=False, action='store_true')
+parser.add_argument('--smoothing_kernel', default=5, type=int)
 
 
 def main():
@@ -42,8 +45,8 @@ def main():
     patch_size = args.patch_size
     min_overlap = args.min_overlap
     edge_buffer = args.edge_buffer
-    smoothing = True
-    smoothing_kernel = 5
+    smoothing = args.smoothing
+    smoothing_kernel = args.smoothing_kernel
 
     mean = np.array([0.485, 0.456, 0.406])
     std = np.array([0.229, 0.224, 0.225])
@@ -61,10 +64,7 @@ def main():
     #with resources.open_text('snowpack', ) as file:
     model_cfg = 'configs/sam2.1/sam2.1_hiera_s.yaml'
     sam2_model = build_sam2(config_file=model_cfg, ckpt_path=sam2_checkpoint, device=device)
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
-    if multiclass:
-        sam2_model = MulticlassSAMWrapper(sam2_model, n_classes).to(device)
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ multiclass ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+    sam2_model = MulticlassSAMWrapper(sam2_model, n_classes).to(device)
     predictor = SAM2ImagePredictor(sam2_model)
     predictor.model.load_state_dict(torch.load(saved_model_location))
     sparse_embeddings = torch.zeros((1, 1, 256), device=predictor.model.device)
