@@ -16,7 +16,7 @@ from train_epochs import MulticlassSAMWrapper
 parser = argparse.ArgumentParser()
 
 
-parser.add_argument('--image_path', type=str, default='snowpack/data/multiclass_10_2/train/images/10.tiff')
+parser.add_argument('--image_path', type=str, default='snowpack/data/multiclass_10_2/train/images/8.tiff')
 parser.add_argument('--saved_model_location', type=str, default='snowpack/model/model_checkpoints/snowpack_sam2_revert_boundary_resize_simple_100.torch')
 parser.add_argument('--save_image_location', type=str, default='final_mask.pt')
 
@@ -77,12 +77,12 @@ def main():
     patches, patch_coords = chunk_image_no_padding(image, patch_size, min_overlap)
     patches = [test_transform(i).permute(1, 2, 0) for i in patches]
 
-    if more_overlap:
-        patches2, patch_coords2 = chunk_image_no_padding(image, patch_size, min_overlap+50)
-        patches2 = [test_transform(i).permute(1, 2, 0) for i in patches2]
+    # if more_overlap:
+    #     patches2, patch_coords2 = chunk_image_no_padding(image, patch_size, min_overlap+50)
+    #     patches2 = [test_transform(i).permute(1, 2, 0) for i in patches2]
 
-        patches.extend(patches2)
-        patch_coords.extend(patch_coords2)
+    #     patches.extend(patches2)
+    #     patch_coords.extend(patch_coords2)
 
 
     width, height = image.size
