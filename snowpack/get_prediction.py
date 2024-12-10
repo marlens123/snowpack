@@ -185,6 +185,7 @@ def recombine_patches(probability_class_masks, patch_coords, image_size, edge_bu
     width, height = image_size
 
     # Initialize probability map and overlap count map
+    probability_class_masks = [p.to(torch.float16) for p in probability_class_masks]
     combined_probabilities = torch.zeros((num_classes, height, width), dtype=probability_class_masks[0].dtype)
     overlap_count = torch.zeros((height, width), dtype=torch.float32)
 
