@@ -19,7 +19,7 @@ import torchvision.transforms.functional as TF
 parser = argparse.ArgumentParser()
 
 
-parser.add_argument('--image_path', type=str, default='snowpack/data/multiclass_10_2/test/images/9.tiff')
+parser.add_argument('--image_path', type=str, default='snowpack/data/multiclass_10_2/train/images/10.tiff')
 parser.add_argument('--saved_model_location', type=str, default='snowpack/model/model_checkpoints/snowpack_sam2_revert_boundary_resize_simple_100.torch')
 parser.add_argument('--save_image_location', type=str, default='final_mask.pt')
 
@@ -40,7 +40,6 @@ def main():
     image_path = args.image_path
     saved_model_location = args.saved_model_location
     save_image_location = args.save_image_location
-    multiclass = args.multiclass
     n_classes = args.n_classes
     patch_size = args.patch_size
     min_overlap = args.min_overlap
