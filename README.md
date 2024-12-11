@@ -1,12 +1,10 @@
 # Segmentation of Near-Infrared Snowpack Images Using Deep Learning
 
-Work in progress.. and so is this repository!
+Snowpacks are important elements of the Earth's cryosphere and composed of layers with unique physical properties. Analyzing the composition of snowpacks is key for a variety of environmental applications, including water resource management, avalanche prediction and climate modeling. Existing methods for characterizing snowpacks are based on manually segmenting layers from near-infrared (NIR) images, which is a laborious and time-consuming task, representing a significant bottleneck to the snow science community. This work aims to address this problem by employing the use of deep learning in computer vision to facilitate the automation of the analysis and segmentation of NIR images, thereby enhancing the availability of data for climate modeling and forecasting. We fine-tune Segment Anything 2 (SAM2) using a limited number of near-infrared (NIR) images. The preliminary results of this work indicate that SAM2 is a viable candidate for assisting with the analysis of snowpack stratigraphy. We provide our codebase as a stepping stone for future work.
 
 ## Description
 
 This repository fine-tunes SAM2 to segment near-infrared (NIR) images of snowpacks into different layers.
-
-Snowpacks are important elements of the Earth's cryosphere and composed of layers with unique physical properties. Analyzing the composition of snowpacks is key for a variety of environmental applications, including water resource management, avalanche prediction and climate modeling. Existing methods for characterizing snowpacks are based on manually segmenting layers from near-infrared (NIR) images, which is a laborious and time-consuming task, representing a significant bottleneck to the snow science community. This work aims to address this problem by employing the use of deep learning in computer vision to facilitate the automation of the analysis and segmentation of NIR images, thereby enhancing the availability of data for climate modeling and forecasting. We fine-tune Segment Anything 2 (SAM2) using a limited number of near-infrared (NIR) images. The preliminary results of this work indicate that SAM2 is a viable candidate for assisting with the analysis of snowpack stratigraphy. We provide our codebase as a stepping stone for future work.
 
 ## Acknowledgements
 
