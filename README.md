@@ -1,12 +1,14 @@
 # Segmentation of Near-Infrared Snowpack Images Using Deep Learning
 
+Work in progress.. and so is this repository!
+
 ## Description
 
 This repository fine-tunes SAM2 to segment near-infrared (NIR) images of snowpacks into different layers.
 
 ## Acknowledgements
 
-This repository relies on Francis Pelletier's repository template, licensed under MIT. This project uses SAM2, licensed under Apache-2.0. We thankfully the authors for making their code publicly available.
+This repository is based on the repository template by Francis Pelletier, which is licensed under the MIT License. Additionally, this project utilizes SAM2, which is licensed under the Apache-2.0 License. We would like to express our gratitude to the authors for making their code publicly available.
  
 ## Python Version
 
