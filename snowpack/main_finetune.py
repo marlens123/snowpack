@@ -105,8 +105,7 @@ def main():
     NUM_EPOCHS = config['num_epochs']
     FINETUNED_MODEL_NAME = "snowpack_sam2"
 
-    # TODO: look into that later
-    class_weights = None
+    class_weights = get_class_weights(args.data_path, device) if args.multiclass else None
 
     accumulation_steps = config['accumulation_steps']
 
@@ -252,7 +251,7 @@ def regular_train(args, cfg, train_dataset, test_dataset, accumulation_steps,
 
     for epoch in trange(1, NUM_EPOCHS + 1):
         if not cfg['boundary_mask']:
-            mean_train_iou, loss = multiclass_epoch(train_loader, predictor, accumulation_steps, epoch, optimizer)
+            mean_train_iou, loss = multiclass_epoch(train_loader, predictor, accumulation_steps, epoch, optimizer, class_weights)
             mean_test_iou = validate_multiclass(val_loader, predictor, device)
             if args.use_wandb:
                 wandb.log({"epoch": epoch, "train_loss": loss, "mean_train_iou": mean_train_iou, "mean_test_iou": mean_test_iou})

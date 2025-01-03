@@ -10,7 +10,7 @@ import torch.utils.data
 import torch.utils.data.distributed
 
 
-def multiclass_epoch(train_loader, predictor, accumulation_steps, epoch, optimizer):
+def multiclass_epoch(train_loader, predictor, accumulation_steps, epoch, optimizer, class_weights):
 
     for param in predictor.model.parameters(): param.data = param.data.half()
 
@@ -52,8 +52,8 @@ def multiclass_epoch(train_loader, predictor, accumulation_steps, epoch, optimiz
         assert gt_mask.max() < 21, "gt_mask contains out-of-range indices"
         print(f"Prediction shape: {prd_masks.shape}, Ground truth shape: {gt_mask.shape}")
         ## we might want to do class weighing
-        #loss = F.cross_entropy(prd_masks, gt_mask, weight=class_weights.to(prd_masks.dtype).to(prd_masks.device))
-        loss = F.cross_entropy(prd_masks, gt_mask)
+        loss = F.cross_entropy(prd_masks, gt_mask, weight=class_weights.to(prd_masks.dtype).to(prd_masks.device))
+        # loss = F.cross_entropy(prd_masks, gt_mask)
 
         # IoU computation
         pred_labels = torch.argmax(prd_masks, dim=1)  # Shape: [batch_size, H, W]
